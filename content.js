@@ -4,13 +4,16 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
 
 (() => {
   const INSTANCE_ID = `xray_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const DEFAULT_FOOTER_MESSAGE = 'Click any value to copy • ESC to turn off';
   const sharedState = window.__XRAY_INSPECTOR_SHARED__ || (window.__XRAY_INSPECTOR_SHARED__ = {
     activeInstanceId: null,
     inspectingEnabled: false
   });
 
   let isEnabled = false;
+  let currentTabId = null;
   let lockedTarget = null;
+  let footerResetTimer = null;
   let highlightEl = null;
   let panelEl = null;
   let panelScroll = null;
@@ -24,6 +27,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
 
   const messageListener = (msg) => {
     if (msg.type === 'TOGGLE_INSPECTOR') {
+      if (msg.tabId) currentTabId = msg.tabId;
       sharedState.activeInstanceId = INSTANCE_ID;
       msg.enabled ? enable() : disable(false);
     }
@@ -35,10 +39,11 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
   function enable() {
     sharedState.activeInstanceId = INSTANCE_ID;
     sharedState.inspectingEnabled = true;
-    if (isEnabled) return;
-    isEnabled = true;
     createHighlight();
     createPanel();
+    updatePanelToggle(true);
+    if (isEnabled) return;
+    isEnabled = true;
     showHome();
     addInspectingListeners();
   }
@@ -56,25 +61,25 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     removeInspectingListeners();
     updatePanelToggle(false);
     showHome(true);
-    chrome.storage.local.get(null, (items) => {
+    safeStorageGetAll((items) => {
       const keys = Object.keys(items).filter(k => k.startsWith('inspector_'));
-      if (keys.length) chrome.storage.local.remove(keys);
+      if (keys.length) safeStorageRemove(keys);
     });
-    chrome.runtime.sendMessage({ type: 'INSPECTOR_CLOSED' }).catch(() => {});
+    safeSendMessage({ type: 'INSPECTOR_CLOSED' });
   }
 
   // Re-enable inspecting from panel toggle
   function enableInspecting() {
     sharedState.activeInstanceId = INSTANCE_ID;
     sharedState.inspectingEnabled = true;
-    if (isEnabled) return;
-    isEnabled = true;
     createHighlight();
     createPanel();
+    updatePanelToggle(true);
+    if (isEnabled) return;
+    isEnabled = true;
     showHome();
     addInspectingListeners();
-    updatePanelToggle(true);
-    chrome.runtime.sendMessage({ type: 'INSPECTOR_OPENED' }).catch(() => {});
+    safeSendMessage({ type: 'INSPECTOR_OPENED' });
   }
 
   // Full disable — removes panel too
@@ -88,12 +93,12 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     }
     removeHighlight();
     removePanel();
-    chrome.storage.local.get(null, (items) => {
+    safeStorageGetAll((items) => {
       const keys = Object.keys(items).filter(k => k.startsWith('inspector_'));
-      if (keys.length) chrome.storage.local.remove(keys);
+      if (keys.length) safeStorageRemove(keys);
     });
     if (notifyPopup) {
-      chrome.runtime.sendMessage({ type: 'INSPECTOR_CLOSED' }).catch(() => {});
+      safeSendMessage({ type: 'INSPECTOR_CLOSED' });
     }
   }
 
@@ -174,6 +179,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       <div class="__dip_header__">
         <div class="__dip_header_icon__">⬡</div>
         <span class="__dip_header_title__">Xray</span>
+        <button class="__dip_devtools__" id="__dip_devtools_btn__" title="Use Xray in DevTools">DevTools</button>
         <label class="__dip_panel_toggle__" id="__dip_panel_toggle__" title="Toggle inspector">
           <input type="checkbox" id="__dip_panel_toggle_input__" checked>
           <span class="__dip_panel_toggle_track__"><span class="__dip_panel_toggle_thumb__"></span></span>
@@ -181,16 +187,24 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
         <button class="__dip_close__" id="__dip_close_btn__" title="Close panel">✕</button>
       </div>
       <div class="__dip_scroll__"></div>
-      <div class="__dip_footer__">Click any value to copy • ESC to turn off</div>
+      <div class="__dip_footer__" id="__dip_footer__">${DEFAULT_FOOTER_MESSAGE}</div>
     `;
     document.body.appendChild(panelEl);
     panelScroll = panelEl.querySelector('.__dip_scroll__');
+
+    document.getElementById('__dip_devtools_btn__').addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      if (lockedTarget) persistSnapshot(lockedTarget, 'overlay');
+      showDevToolsHint();
+    });
 
     document.getElementById('__dip_close_btn__').addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      disable(true);
+      handleCloseButton();
     });
 
     document.getElementById('__dip_panel_toggle_input__').addEventListener('change', (e) => {
@@ -208,6 +222,14 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     if (el) el.remove();
     panelEl = null;
     panelScroll = null;
+    if (footerResetTimer) {
+      clearTimeout(footerResetTimer);
+      footerResetTimer = null;
+    }
+  }
+
+  function closePanelOnly() {
+    removePanel();
   }
 
   function addInspectingListeners() {
@@ -265,7 +287,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       e.preventDefault();
       e.stopPropagation();
       e.stopImmediatePropagation();
-      disable(true);
+      handleCloseButton();
       return;
     }
 
@@ -282,6 +304,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     lockedTarget = e.target;
     positionHighlight(e.target, true);
     renderPanel(e.target);
+    persistSnapshot(e.target, 'overlay');
   }
 
   function onKeyDown(e) {
@@ -349,6 +372,8 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
         });
       });
     });
+
+    updateFooterMessage(DEFAULT_FOOTER_MESSAGE);
   }
 
   // ─── Section Helpers ─────────────────────────────────────────────
@@ -598,6 +623,314 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       });
 
     return rows.length ? section('attrs', '📋', 'Useful Attributes', rows.join('')) : '';
+  }
+
+  function persistSnapshot(el, source) {
+    if (!el) return;
+    const snapshot = createSnapshot(el, source);
+    if (currentTabId) {
+      safeStorageSet({ [`xray_capture_${currentTabId}`]: snapshot });
+    }
+    safeSendMessage({ type: 'XRAY_CAPTURE_UPDATED', tabId: currentTabId || null, snapshot });
+  }
+
+  function createSnapshot(el, source) {
+    const cs = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    const fullText = getFullText(el);
+    const tag = el.tagName.toLowerCase();
+    const selector = buildSelector(el);
+    const identityRows = [];
+    const elementProps = [];
+    const state = [];
+    const layout = [];
+    const visual = [];
+    const attributes = [];
+
+    if (el.id) identityRows.push(makeDataRow('id', '#' + el.id));
+    if (el.classList.length) identityRows.push(makeDataRow('classes', '.' + [...el.classList].slice(0, 4).join(' .')));
+    if (fullText) identityRows.push(makeDataRow('text', truncateValue(fullText, 60), 'neutral', fullText));
+
+    if (el.hasAttribute('title')) {
+      const title = el.getAttribute('title') || '(empty)';
+      elementProps.push(makeDataRow('title', truncateValue(title, 48), title === '(empty)' ? 'neutral' : '', title));
+    }
+
+    if (tag === 'a' && el.hasAttribute('href')) {
+      const href = el.getAttribute('href') || '(empty)';
+      elementProps.push(makeDataRow('href', truncateValue(href, 56), '', href));
+      if (el.hasAttribute('target')) elementProps.push(makeDataRow('target', el.getAttribute('target')));
+      if (el.hasAttribute('rel')) elementProps.push(makeDataRow('rel', truncateValue(el.getAttribute('rel'), 40), 'neutral', el.getAttribute('rel')));
+    }
+
+    if (tag === 'img') {
+      if (el.hasAttribute('src')) {
+        const src = el.getAttribute('src') || '(empty)';
+        elementProps.push(makeDataRow('src', truncateValue(src, 56), '', src));
+      }
+      if (el.hasAttribute('alt')) elementProps.push(makeDataRow('alt', truncateValue(el.getAttribute('alt') || '(empty)', 48), 'neutral', el.getAttribute('alt') || '(empty)'));
+      if (typeof el.naturalWidth === 'number' && typeof el.naturalHeight === 'number') {
+        elementProps.push(makeDataRow('natural', `${el.naturalWidth}px × ${el.naturalHeight}px`));
+      }
+    }
+
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') {
+      if (el.getAttribute('type')) elementProps.push(makeDataRow('type', el.getAttribute('type')));
+      if (el.getAttribute('name')) elementProps.push(makeDataRow('name', el.getAttribute('name')));
+      if (el.getAttribute('placeholder')) elementProps.push(makeDataRow('placeholder', truncateValue(el.getAttribute('placeholder'), 48), 'neutral', el.getAttribute('placeholder')));
+      if (tag === 'select') {
+        if (el.value) elementProps.push(makeDataRow('value', truncateValue(el.value, 48), '', el.value));
+      } else {
+        const inputType = (el.getAttribute('type') || '').toLowerCase();
+        const value = inputType === 'password' ? '(hidden)' : (el.value || el.getAttribute('value'));
+        const copyValue = inputType === 'password' ? '(hidden)' : value;
+        if (value) elementProps.push(makeDataRow('value', truncateValue(value, 48), inputType === 'password' ? 'neutral' : '', copyValue));
+      }
+    }
+
+    if (tag === 'button' && el.getAttribute('type')) elementProps.push(makeDataRow('type', el.getAttribute('type')));
+    if (tag === 'label' && el.getAttribute('for')) elementProps.push(makeDataRow('for', el.getAttribute('for')));
+
+    if (el.hasAttribute('disabled')) state.push(makeDataRow('disabled', 'true'));
+    if (el.hasAttribute('required')) state.push(makeDataRow('required', 'true'));
+    if (el.hasAttribute('readonly')) state.push(makeDataRow('readonly', 'true'));
+    if (typeof el.checked === 'boolean' && el.checked) state.push(makeDataRow('checked', 'true'));
+    if (typeof el.selected === 'boolean' && el.selected) state.push(makeDataRow('selected', 'true'));
+    if (el.hasAttribute('hidden')) state.push(makeDataRow('hidden', 'true', 'neutral'));
+    if (el.hasAttribute('tabindex')) state.push(makeDataRow('tabindex', el.getAttribute('tabindex')));
+    if (el.getAttribute('contenteditable') === 'true') state.push(makeDataRow('editable', 'true'));
+    if (cs.visibility !== 'visible') state.push(makeDataRow('visibility', cs.visibility, 'highlight'));
+    if (cs.pointerEvents === 'none') state.push(makeDataRow('pointer-events', cs.pointerEvents, 'highlight'));
+    if (cs.userSelect !== 'auto' && cs.userSelect !== 'text') state.push(makeDataRow('user-select', cs.userSelect));
+    if (cs.cursor !== 'auto') state.push(makeDataRow('cursor', cs.cursor));
+    if (hasUsefulTransition(cs)) state.push(makeDataRow('transition', truncateValue(cs.transition, 40), 'neutral', cs.transition));
+
+    layout.push(makeDataRow('size', `${Math.round(rect.width)}px × ${Math.round(rect.height)}px`));
+    layout.push(makeDataRow('display', cs.display, cs.display === 'none' ? 'highlight' : ''));
+    if (cs.position !== 'static') layout.push(makeDataRow('position', cs.position));
+    if (cs.zIndex !== 'auto') layout.push(makeDataRow('z-index', cs.zIndex));
+    if (hasUsefulOverflow(cs)) layout.push(makeDataRow('overflow', summarizeOverflow(cs)));
+    if (hasUsefulGap(cs)) layout.push(makeDataRow('gap', formatGap(cs)));
+    if (hasFlexAlignment(cs)) layout.push(makeDataRow('align', `${cs.justifyContent} / ${cs.alignItems}`));
+
+    const parentLayout = buildParentLayoutSnapshot(el, cs);
+    const boxModel = buildBoxModelSnapshot(cs, rect);
+
+    const hasText = !!getTextPreview(el);
+    const textColor = buildColorRowData('color', cs.color);
+    const backgroundColor = buildColorRowData('background', cs.backgroundColor);
+    if (textColor) visual.push(textColor);
+    if (backgroundColor) visual.push(backgroundColor);
+    if (hasText) visual.push(makeDataRow('font', primaryFont(cs.fontFamily)));
+    if (hasText) visual.push(makeDataRow('font-size', cs.fontSize));
+    if (hasText && cs.fontWeight !== '400') visual.push(makeDataRow('font-weight', cs.fontWeight));
+    if (hasText && cs.lineHeight !== 'normal') visual.push(makeDataRow('line-height', cs.lineHeight));
+    if (cs.opacity !== '1') visual.push(makeDataRow('opacity', cs.opacity));
+    if (hasVisibleRadius(cs.borderRadius)) visual.push(makeDataRow('radius', cs.borderRadius));
+    if (cs.boxShadow !== 'none') visual.push(makeDataRow('shadow', truncateValue(cs.boxShadow, 40), 'neutral', cs.boxShadow));
+
+    ['role', 'aria-label', 'aria-labelledby', 'aria-describedby', 'aria-expanded', 'aria-hidden', 'aria-current', 'aria-pressed']
+      .forEach((name) => {
+        if (!el.hasAttribute(name)) return;
+        const value = el.getAttribute(name) || '(empty)';
+        attributes.push(makeDataRow(name, truncateValue(value, 48), value === '(empty)' ? 'neutral' : '', value));
+      });
+
+    [...el.attributes]
+      .filter((attr) => attr.name.startsWith('data-'))
+      .slice(0, 4)
+      .forEach((attr) => {
+        const value = attr.value || '(empty)';
+        attributes.push(makeDataRow(attr.name, truncateValue(value, 48), value === '(empty)' ? 'neutral' : '', value));
+      });
+
+    return {
+      source: source || 'overlay',
+      capturedAt: Date.now(),
+      pageTitle: document.title,
+      pageUrl: location.href,
+      identity: {
+        tag,
+        selector,
+        rows: identityRows
+      },
+      elementProps,
+      state,
+      layout,
+      parentLayout,
+      boxModel,
+      visual,
+      attributes
+    };
+  }
+
+  function buildParentLayoutSnapshot(el, cs) {
+    const parent = el.parentElement;
+    if (!parent) return [];
+    const pcs = window.getComputedStyle(parent);
+    const isFlexParent = pcs.display.includes('flex');
+    const isGridParent = pcs.display.includes('grid');
+    const rows = [];
+
+    if (isFlexParent || isGridParent) rows.push(makeDataRow('parent', pcs.display));
+    if (hasUsefulGap(pcs)) rows.push(makeDataRow('parent gap', formatGap(pcs)));
+    if (hasFlexAlignment(pcs)) rows.push(makeDataRow('parent align', `${pcs.justifyContent} / ${pcs.alignItems}`));
+    if (isFlexParent && hasUsefulFlexItem(cs)) rows.push(makeDataRow('item flex', summarizeFlexItem(cs)));
+    if (isFlexParent && cs.alignSelf !== 'auto') rows.push(makeDataRow('align-self', cs.alignSelf));
+    if (isGridParent && hasUsefulGridPlacement(cs)) rows.push(makeDataRow('grid', summarizeGridPlacement(cs)));
+    if (isGridParent && cs.justifySelf !== 'auto') rows.push(makeDataRow('justify-self', cs.justifySelf));
+    if (isGridParent && cs.alignSelf !== 'auto') rows.push(makeDataRow('align-self', cs.alignSelf));
+
+    return rows;
+  }
+
+  function buildBoxModelSnapshot(cs, rect) {
+    const g = p => cs.getPropertyValue(p);
+    const margin = [g('margin-top'), g('margin-right'), g('margin-bottom'), g('margin-left')];
+    const border = [g('border-top-width'), g('border-right-width'), g('border-bottom-width'), g('border-left-width')];
+    const padding = [g('padding-top'), g('padding-right'), g('padding-bottom'), g('padding-left')];
+    const summary = [];
+
+    if (hasNonZeroBoxValues(margin)) summary.push(makeDataRow('margin', formatBoxValues(margin)));
+    if (hasNonZeroBoxValues(border)) summary.push(makeDataRow('border', formatBoxValues(border)));
+    if (hasNonZeroBoxValues(padding)) summary.push(makeDataRow('padding', formatBoxValues(padding)));
+
+    if (!summary.length) return null;
+
+    return {
+      summary,
+      margin,
+      border,
+      padding,
+      size: `${Math.round(rect.width)} × ${Math.round(rect.height)}`
+    };
+  }
+
+  function makeDataRow(key, value, tone = '', copyValue = '') {
+    return {
+      key,
+      value: String(value),
+      tone,
+      copyValue: copyValue || String(value)
+    };
+  }
+
+  function buildColorRowData(key, value) {
+    if (!value || value === 'transparent' || value === 'rgba(0, 0, 0, 0)') return null;
+    const display = rgbToHex(value) || value;
+    return {
+      key,
+      value: display,
+      tone: '',
+      copyValue: display,
+      swatch: value
+    };
+  }
+
+  function showDevToolsHint() {
+    if (!currentTabId) {
+      updateFooterMessage('Open DevTools, then choose the Xray tab. Last inspected element is ready there.', 'info', true);
+      return;
+    }
+
+    safeSendMessage({ type: 'XRAY_DEVTOOLS_STATUS', tabId: currentTabId }).then((response) => {
+      if (response && response.enabled === false) {
+        updateFooterMessage('Xray DevTools is disabled. Turn it back on from the popup.', 'info', true);
+        return;
+      }
+      if (response && response.open) {
+        updateFooterMessage('DevTools is already open. Switch to the Xray tab there.', 'info', true);
+        return;
+      }
+      updateFooterMessage('Open DevTools, then choose the Xray tab. Last inspected element is ready there.', 'info', true);
+    }).catch(() => {
+      updateFooterMessage('Open DevTools, then choose the Xray tab. Last inspected element is ready there.', 'info', true);
+    });
+  }
+
+  function handleCloseButton() {
+    isDevToolsOpen().then((devtoolsOpen) => {
+      if (devtoolsOpen) {
+        closePanelOnly();
+        return;
+      }
+      disable(true);
+    }).catch(() => {
+      disable(true);
+    });
+  }
+
+  function isDevToolsOpen() {
+    if (!currentTabId) return Promise.resolve(false);
+    return safeSendMessage({ type: 'XRAY_DEVTOOLS_STATUS', tabId: currentTabId })
+      .then((response) => !!(response && response.open))
+      .catch(() => false);
+  }
+
+  function updateFooterMessage(message, tone = 'default', temporary = false) {
+    const footer = document.getElementById('__dip_footer__');
+    if (!footer) return;
+    if (footerResetTimer) {
+      clearTimeout(footerResetTimer);
+      footerResetTimer = null;
+    }
+    footer.textContent = message;
+    footer.setAttribute('data-tone', tone);
+    if (temporary) {
+      footerResetTimer = setTimeout(() => {
+        footer.textContent = DEFAULT_FOOTER_MESSAGE;
+        footer.setAttribute('data-tone', 'default');
+      }, 3200);
+    }
+  }
+
+  function hasExtensionContext() {
+    try {
+      return !!(chrome && chrome.runtime && chrome.runtime.id && chrome.storage && chrome.storage.local);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  function safeSendMessage(message) {
+    if (!hasExtensionContext()) return Promise.resolve(null);
+    try {
+      return chrome.runtime.sendMessage(message).catch(() => null);
+    } catch (_) {
+      return Promise.resolve(null);
+    }
+  }
+
+  function safeStorageSet(value) {
+    if (!hasExtensionContext()) return;
+    try {
+      chrome.storage.local.set(value);
+    } catch (_) {
+      // Ignore invalidated extension contexts after reloads.
+    }
+  }
+
+  function safeStorageRemove(keys) {
+    if (!hasExtensionContext()) return;
+    try {
+      chrome.storage.local.remove(keys);
+    } catch (_) {
+      // Ignore invalidated extension contexts after reloads.
+    }
+  }
+
+  function safeStorageGetAll(callback) {
+    if (!hasExtensionContext()) {
+      callback({});
+      return;
+    }
+    try {
+      chrome.storage.local.get(null, (items) => {
+        callback(items || {});
+      });
+    } catch (_) {
+      callback({});
+    }
   }
 
   // ─── Utilities ───────────────────────────────────────────────────

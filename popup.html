@@ -113,6 +113,24 @@
       color: #4b5563;
     }
 
+    .toggle-meta {
+      margin-top: 6px;
+      display: none;
+      font-size: 8px;
+      color: #7dd3fc;
+      letter-spacing: 0.04em;
+      line-height: 1.4;
+      padding: 5px 7px;
+      border-radius: 6px;
+      background: rgba(34, 211, 238, 0.08);
+      border: 1px solid rgba(34, 211, 238, 0.18);
+    }
+
+    .toggle-meta.visible {
+      display: inline-flex;
+      align-items: center;
+    }
+
     .toggle-switch {
       position: relative;
       width: 38px; height: 20px;
@@ -251,6 +269,20 @@
       </div>
       <label class="toggle-switch">
         <input type="checkbox" id="toggle" />
+        <div class="toggle-track">
+          <div class="toggle-thumb"></div>
+        </div>
+      </label>
+    </div>
+
+    <div class="toggle-row" id="devtools-toggle-row">
+      <div class="toggle-label">
+        <span class="toggle-title">Enable In DevTools</span>
+        <span class="toggle-desc">Add Xray to Chrome DevTools</span>
+        <span class="toggle-meta" id="devtools-meta" aria-live="polite"></span>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="devtools-toggle" />
         <div class="toggle-track">
           <div class="toggle-thumb"></div>
         </div>
