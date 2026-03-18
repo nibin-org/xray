@@ -1,8 +1,14 @@
-if (window.__DOM_INSPECTOR_DISABLE__) {
-  window.__DOM_INSPECTOR_DISABLE__();
+if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.destroy) {
+  window.__XRAY_INSPECTOR_INSTANCE__.destroy(false);
 }
 
 (() => {
+  const INSTANCE_ID = `xray_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const sharedState = window.__XRAY_INSPECTOR_SHARED__ || (window.__XRAY_INSPECTOR_SHARED__ = {
+    activeInstanceId: null,
+    inspectingEnabled: false
+  });
+
   let isEnabled = false;
   let lockedTarget = null;
   let highlightEl = null;
@@ -11,38 +17,45 @@ if (window.__DOM_INSPECTOR_DISABLE__) {
   let collapsedSections = new Set();
 
   window.__DOM_INSPECTOR_DISABLE__ = () => disable(false);
+  window.__XRAY_INSPECTOR_INSTANCE__ = {
+    destroy,
+    instanceId: INSTANCE_ID
+  };
 
-  chrome.runtime.onMessage.addListener((msg) => {
+  const messageListener = (msg) => {
     if (msg.type === 'TOGGLE_INSPECTOR') {
+      sharedState.activeInstanceId = INSTANCE_ID;
       msg.enabled ? enable() : disable(false);
     }
-  });
+  };
+
+  chrome.runtime.onMessage.addListener(messageListener);
 
   // ─── Enable / Disable ────────────────────────────────────────────
   function enable() {
+    sharedState.activeInstanceId = INSTANCE_ID;
+    sharedState.inspectingEnabled = true;
     if (isEnabled) return;
     isEnabled = true;
     createHighlight();
     createPanel();
     showHome();
-    document.addEventListener('mouseover', onMouseOver, true);
-    document.addEventListener('mouseout', onMouseOut, true);
-    document.addEventListener('click', onClick, true);
-    document.addEventListener('keydown', onKeyDown, true);
+    addInspectingListeners();
   }
 
   // Disable only inspecting, keep panel visible
   function disableInspecting() {
-    if (!isEnabled) return;
+    if (!isEnabled && !isActiveInstance()) {
+      return;
+    }
     isEnabled = false;
+    sharedState.activeInstanceId = INSTANCE_ID;
+    sharedState.inspectingEnabled = false;
     lockedTarget = null;
     removeHighlight();
-    showHome();
-    document.removeEventListener('mouseover', onMouseOver, true);
-    document.removeEventListener('mouseout', onMouseOut, true);
-    document.removeEventListener('click', onClick, true);
-    document.removeEventListener('keydown', onKeyDown, true);
+    removeInspectingListeners();
     updatePanelToggle(false);
+    showHome(true);
     chrome.storage.local.get(null, (items) => {
       const keys = Object.keys(items).filter(k => k.startsWith('inspector_'));
       if (keys.length) chrome.storage.local.remove(keys);
@@ -52,30 +65,29 @@ if (window.__DOM_INSPECTOR_DISABLE__) {
 
   // Re-enable inspecting from panel toggle
   function enableInspecting() {
+    sharedState.activeInstanceId = INSTANCE_ID;
+    sharedState.inspectingEnabled = true;
     if (isEnabled) return;
     isEnabled = true;
     createHighlight();
     createPanel();
     showHome();
-    document.addEventListener('mouseover', onMouseOver, true);
-    document.addEventListener('mouseout', onMouseOut, true);
-    document.addEventListener('click', onClick, true);
-    document.addEventListener('keydown', onKeyDown, true);
+    addInspectingListeners();
     updatePanelToggle(true);
     chrome.runtime.sendMessage({ type: 'INSPECTOR_OPENED' }).catch(() => {});
   }
 
   // Full disable — removes panel too
   function disable(notifyPopup = true) {
-    if (!isEnabled) return;
     isEnabled = false;
     lockedTarget = null;
+    removeInspectingListeners();
+    if (sharedState.activeInstanceId === INSTANCE_ID) {
+      sharedState.activeInstanceId = null;
+      sharedState.inspectingEnabled = false;
+    }
     removeHighlight();
     removePanel();
-    document.removeEventListener('mouseover', onMouseOver, true);
-    document.removeEventListener('mouseout', onMouseOut, true);
-    document.removeEventListener('click', onClick, true);
-    document.removeEventListener('keydown', onKeyDown, true);
     chrome.storage.local.get(null, (items) => {
       const keys = Object.keys(items).filter(k => k.startsWith('inspector_'));
       if (keys.length) chrome.storage.local.remove(keys);
@@ -85,17 +97,32 @@ if (window.__DOM_INSPECTOR_DISABLE__) {
     }
   }
 
+  function destroy(notifyPopup = false) {
+    disable(notifyPopup);
+    chrome.runtime.onMessage.removeListener(messageListener);
+    if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.instanceId === INSTANCE_ID) {
+      delete window.__XRAY_INSPECTOR_INSTANCE__;
+    }
+    if (window.__DOM_INSPECTOR_DISABLE__ && window.__XRAY_INSPECTOR_INSTANCE__ == null) {
+      delete window.__DOM_INSPECTOR_DISABLE__;
+    }
+  }
+
   function updatePanelToggle(checked) {
     const input = document.getElementById('__dip_panel_toggle_input__');
     if (input) input.checked = checked;
   }
 
-  function showHome() {
+  function showHome(disabled = false) {
     lockedTarget = null;
     if (highlightEl) highlightEl.style.display = 'none';
     if (panelScroll) {
-      panelScroll.innerHTML = `
-        <div class="__dip_empty__">
+      panelScroll.innerHTML = disabled
+        ? `<div class="__dip_empty__">
+          <div class="__dip_empty_icon__">⬡</div>
+          <div class="__dip_empty_text__">Inspector is off.<br>Toggle on to inspect elements.</div>
+        </div>`
+        : `<div class="__dip_empty__">
           <div class="__dip_empty_icon__">⬡</div>
           <div class="__dip_empty_text__">Click any element on the page<br>to inspect its properties</div>
         </div>`;
@@ -123,12 +150,11 @@ if (window.__DOM_INSPECTOR_DISABLE__) {
     if (!highlightEl || !el) return;
     const r = el.getBoundingClientRect();
     Object.assign(highlightEl.style, {
-      top: (r.top + window.scrollY) + 'px',
-      left: (r.left + window.scrollX) + 'px',
+      top: r.top + 'px',
+      left: r.left + 'px',
       width: r.width + 'px',
       height: r.height + 'px',
-      display: 'block',
-      position: 'absolute'
+      display: 'block'
     });
     highlightEl.setAttribute('data-tag', el.tagName.toLowerCase());
     highlightEl.classList.toggle('locked', !!locked);
@@ -184,6 +210,28 @@ if (window.__DOM_INSPECTOR_DISABLE__) {
     panelScroll = null;
   }
 
+  function addInspectingListeners() {
+    document.addEventListener('mouseover', onMouseOver, true);
+    document.addEventListener('mouseout', onMouseOut, true);
+    document.addEventListener('click', onClick, true);
+    document.addEventListener('keydown', onKeyDown, true);
+  }
+
+  function removeInspectingListeners() {
+    document.removeEventListener('mouseover', onMouseOver, true);
+    document.removeEventListener('mouseout', onMouseOut, true);
+    document.removeEventListener('click', onClick, true);
+    document.removeEventListener('keydown', onKeyDown, true);
+  }
+
+  function isActiveInstance() {
+    return sharedState.activeInstanceId === INSTANCE_ID;
+  }
+
+  function canInspect() {
+    return isEnabled && isActiveInstance() && sharedState.inspectingEnabled;
+  }
+
   // ─── Events ──────────────────────────────────────────────────────
   function isInPanel(el) {
     // Use DOM query instead of variable reference — more reliable after re-injection
@@ -192,6 +240,7 @@ if (window.__DOM_INSPECTOR_DISABLE__) {
   }
 
   function onMouseOver(e) {
+    if (!canInspect()) return;
     const t = e.target;
     if (!t || isInPanel(t) || t.id === '__dom_inspector_highlight__') return;
     lockedTarget = null;
@@ -199,6 +248,10 @@ if (window.__DOM_INSPECTOR_DISABLE__) {
   }
 
   function onMouseOut(e) {
+    if (!canInspect()) {
+      if (highlightEl) highlightEl.style.display = 'none';
+      return;
+    }
     if (!lockedTarget && highlightEl) {
       const related = e.relatedTarget;
       if (!related || isInPanel(related)) return;
@@ -219,11 +272,13 @@ if (window.__DOM_INSPECTOR_DISABLE__) {
     // Any other click inside panel — let it through (scrolling, copy buttons etc.)
     if (isInPanel(e.target)) return;
     if (e.target.id === '__dom_inspector_highlight__') return;
+    if (!canInspect()) return;
 
     e.preventDefault();
     e.stopPropagation();
     e.stopImmediatePropagation();
 
+    if (lockedTarget === e.target) return;
     lockedTarget = e.target;
     positionHighlight(e.target, true);
     renderPanel(e.target);
