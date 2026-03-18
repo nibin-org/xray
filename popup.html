@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DOM Inspector</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 260px;
+      background: #0d0d0f;
+      color: #e2e8f0;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #0d0d0f 0%, #151519 100%);
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid #1e1e2e;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .header::before {
+      content: '';
+      position: absolute;
+      top: -20px; right: -20px;
+      width: 80px; height: 80px;
+      background: radial-gradient(circle, rgba(99,102,241,0.15) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .logo-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 4px;
+    }
+
+    .logo-icon {
+      width: 28px; height: 28px;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px;
+      box-shadow: 0 0 12px rgba(99,102,241,0.4);
+    }
+
+    .logo-text {
+      font-size: 13px;
+      font-weight: 700;
+      color: #f1f5f9;
+      letter-spacing: 0.05em;
+    }
+
+    .logo-version {
+      font-size: 9px;
+      color: #6366f1;
+      background: rgba(99,102,241,0.1);
+      border: 1px solid rgba(99,102,241,0.2);
+      padding: 1px 5px;
+      border-radius: 3px;
+      margin-left: auto;
+    }
+
+    .subtitle {
+      font-size: 9px;
+      color: #4b5563;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .body {
+      padding: 16px 20px;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #111117;
+      border: 1px solid #1e1e2e;
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      transition: border-color 0.2s;
+    }
+
+    .toggle-row.active {
+      border-color: rgba(99,102,241,0.4);
+      background: rgba(99,102,241,0.05);
+    }
+
+    .toggle-label {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .toggle-title {
+      font-size: 11px;
+      font-weight: 600;
+      color: #e2e8f0;
+    }
+
+    .toggle-desc {
+      font-size: 9px;
+      color: #4b5563;
+    }
+
+    .toggle-switch {
+      position: relative;
+      width: 38px; height: 20px;
+      cursor: pointer;
+    }
+
+    .toggle-switch input { display: none; }
+
+    .toggle-track {
+      position: absolute;
+      inset: 0;
+      background: #1e1e2e;
+      border-radius: 20px;
+      transition: background 0.2s;
+      border: 1px solid #2d2d3d;
+    }
+
+    .toggle-thumb {
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 14px; height: 14px;
+      background: #4b5563;
+      border-radius: 50%;
+      transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1);
+    }
+
+    .toggle-switch input:checked ~ .toggle-track {
+      background: linear-gradient(135deg, #6366f1, #8b5cf6);
+      border-color: #6366f1;
+    }
+
+    .toggle-switch input:checked ~ .toggle-track .toggle-thumb {
+      left: 21px;
+      background: #fff;
+    }
+
+    .shortcut-hint {
+      font-size: 9px;
+      color: #374151;
+      text-align: center;
+      margin-bottom: 12px;
+      letter-spacing: 0.05em;
+    }
+
+    .shortcut-hint kbd {
+      background: #1a1a24;
+      border: 1px solid #2d2d3d;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 9px;
+      color: #6b7280;
+    }
+
+    .features {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .feature-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 9px;
+      color: #4b5563;
+      letter-spacing: 0.03em;
+    }
+
+    .feature-dot {
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: #374151;
+      flex-shrink: 0;
+    }
+
+    .feature-item.highlight .feature-dot { background: #6366f1; }
+    .feature-item.highlight { color: #6b7280; }
+
+    .divider {
+      height: 1px;
+      background: #1a1a24;
+      margin: 12px 0;
+    }
+
+    .status-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 9px;
+      color: #374151;
+    }
+
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #374151;
+      transition: all 0.3s;
+    }
+
+    .status-dot.on {
+      background: #22c55e;
+      box-shadow: 0 0 6px rgba(34,197,94,0.5);
+    }
+
+    #status-text { transition: color 0.2s; }
+    #status-text.on { color: #22c55e; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo-row">
+      <div class="logo-icon">⬡</div>
+      <span class="logo-text">DOM Inspector</span>
+      <span class="logo-version">v1.0</span>
+    </div>
+    <div class="subtitle">Element Property Viewer</div>
+  </div>
+
+  <div class="body">
+    <div class="toggle-row" id="toggle-row">
+      <div class="toggle-label">
+        <span class="toggle-title">Inspector</span>
+        <span class="toggle-desc">Click to lock, hover to preview</span>
+      </div>
+      <label class="toggle-switch">
+        <input type="checkbox" id="toggle" />
+        <div class="toggle-track">
+          <div class="toggle-thumb"></div>
+        </div>
+      </label>
+    </div>
+
+    <div class="shortcut-hint">Press <kbd>Esc</kbd> to disable on page</div>
+
+    <div class="features">
+      <div class="feature-item highlight">
+        <div class="feature-dot"></div>
+        Click element to lock panel
+      </div>
+      <div class="feature-item highlight">
+        <div class="feature-dot"></div>
+        Box model visualizer
+      </div>
+      <div class="feature-item highlight">
+        <div class="feature-dot"></div>
+        Click any value to copy
+      </div>
+      <div class="feature-item highlight">
+        <div class="feature-dot"></div>
+        Color swatches with hex codes
+      </div>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="status-bar">
+      <div class="status-dot" id="status-dot"></div>
+      <span id="status-text">Inspector is off</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
