@@ -147,7 +147,7 @@ if (window.__DOM_INSPECTOR_DISABLE__) {
     panelEl.innerHTML = `
       <div class="__dip_header__">
         <div class="__dip_header_icon__">⬡</div>
-        <span class="__dip_header_title__">DOM Inspector</span>
+        <span class="__dip_header_title__">Xray</span>
         <label class="__dip_panel_toggle__" id="__dip_panel_toggle__" title="Toggle inspector">
           <input type="checkbox" id="__dip_panel_toggle_input__" checked>
           <span class="__dip_panel_toggle_track__"><span class="__dip_panel_toggle_thumb__"></span></span>
