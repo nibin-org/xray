@@ -18,6 +18,14 @@ function createDevtoolsSurfaces() {
 
   chrome.devtools.panels.elements.createSidebarPane('Xray', (sidebar) => {
     function updateSidebar() {
+      if (!devtoolsEnabled) {
+        sidebar.setObject(
+          { status: 'DevTools is paused. Open the Xray sidebar when you want to continue inspecting.' },
+          'Xray'
+        );
+        return;
+      }
+
       chrome.devtools.inspectedWindow.eval(
         `(${buildSidebarSnapshot.toString()})()`,
         (result, exceptionInfo) => {
@@ -27,8 +35,19 @@ function createDevtoolsSurfaces() {
       );
     }
 
+    function disableAfterRefresh() {
+      if (!devtoolsEnabled) {
+        updateSidebar();
+        return;
+      }
+
+      devtoolsEnabled = false;
+      chrome.storage.local.set({ [DEVTOOLS_ENABLED_KEY]: false }, updateSidebar);
+    }
+
     sidebar.setHeight('100vh');
     chrome.devtools.panels.elements.onSelectionChanged.addListener(updateSidebar);
+    chrome.devtools.network.onNavigated.addListener(disableAfterRefresh);
     updateSidebar();
   });
 }

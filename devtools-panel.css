@@ -363,25 +363,97 @@ h1 {
 .empty-state {
   grid-column: 1 / -1;
   min-height: 320px;
-  border: 1px dashed rgba(103, 232, 249, 0.22);
+  max-width: 560px;
+  margin: 0 auto;
+  padding: 28px 24px;
+  border: 1px solid rgba(103, 232, 249, 0.14);
   border-radius: 24px;
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  gap: 10px;
+  gap: 12px;
   color: var(--muted);
+  background:
+    radial-gradient(circle at top, rgba(103, 232, 249, 0.1), transparent 48%),
+    linear-gradient(180deg, rgba(18, 23, 42, 0.96), rgba(12, 17, 31, 0.96));
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.03),
+    0 18px 40px rgba(0, 0, 0, 0.22);
+}
+
+.empty-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 28px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(103, 232, 249, 0.22);
+  background: rgba(103, 232, 249, 0.08);
+  color: var(--accent);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.empty-icon-wrap {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(103, 232, 249, 0.12);
 }
 
 .empty-icon {
-  font-size: 32px;
+  font-size: 34px;
   color: var(--accent);
 }
 
 .empty-title {
   color: var(--text);
-  font-size: 18px;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.empty-text {
+  max-width: 440px;
+  line-height: 1.7;
+  font-size: 14px;
+}
+
+.empty-state-paused {
+  border-color: rgba(251, 191, 36, 0.18);
+  background:
+    radial-gradient(circle at top, rgba(251, 191, 36, 0.08), transparent 48%),
+    linear-gradient(180deg, rgba(18, 23, 42, 0.96), rgba(12, 17, 31, 0.96));
+}
+
+.empty-state-paused .empty-eyebrow {
+  border-color: rgba(251, 191, 36, 0.24);
+  background: rgba(251, 191, 36, 0.08);
+  color: #fcd34d;
+}
+
+.empty-state-ready .empty-eyebrow {
+  border-color: rgba(134, 239, 172, 0.24);
+  background: rgba(134, 239, 172, 0.08);
+  color: var(--success);
+}
+
+.empty-state-closed .empty-eyebrow {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.04);
+  color: #cbd5e1;
+}
+
+.empty-state .action-btn {
+  margin-top: 8px;
 }
 
 @media (max-width: 720px) {

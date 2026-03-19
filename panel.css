@@ -281,7 +281,7 @@
 
 .__dip_control__ {
   display: flex !important;
-  align-items: center !important;
+  align-items: flex-start !important;
   justify-content: space-between !important;
   gap: 12px !important;
   padding: 12px !important;
@@ -361,6 +361,14 @@
   align-items: center !important;
 }
 
+.__dip_control_actions__ {
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  gap: 6px !important;
+  margin-top: 4px !important;
+}
+
 .__dip_choice_group__ {
   display: inline-flex !important;
   align-items: center !important;
@@ -421,6 +429,11 @@
   border-color: rgba(107, 114, 128, 0.14) !important;
   color: #4b5563 !important;
   cursor: not-allowed !important;
+}
+
+.__dip_secondary_btn_inline__ {
+  width: auto !important;
+  min-width: 150px !important;
 }
 
 .__dip_secondary_btn_danger__ {

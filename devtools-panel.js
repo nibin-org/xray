@@ -5,30 +5,73 @@ const root = document.getElementById('panel-root');
 const sourceBadge = document.getElementById('source-badge');
 const pageMeta = document.getElementById('page-meta');
 const statusText = document.getElementById('status-text');
+const openSidebarButton = document.getElementById('open-sidebar');
 const refreshButton = document.getElementById('refresh-selection');
 const overlayButton = document.getElementById('load-overlay');
 const closeButton = document.getElementById('close-panel');
 const removeDevtoolsButton = document.getElementById('remove-devtools');
 const DEVTOOLS_ENABLED_KEY = 'xray_devtools_enabled';
 let lastSnapshot = null;
-let currentMode = 'overlay';
+let currentMode = 'selection';
 let boxExpanded = false;
 let devtoolsIntegrationEnabled = false;
+let refreshDisabledMessage = '';
+let waitingForFreshInspection = false;
 
 chrome.storage.local.get([DEVTOOLS_ENABLED_KEY], (result) => {
   devtoolsIntegrationEnabled = result[DEVTOOLS_ENABLED_KEY] === true;
   if (!devtoolsIntegrationEnabled) {
-    refreshButton.disabled = true;
-    overlayButton.disabled = true;
+    applyDevtoolsEnabledState(false);
   }
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local' || !changes[DEVTOOLS_ENABLED_KEY]) return;
   devtoolsIntegrationEnabled = changes[DEVTOOLS_ENABLED_KEY].newValue === true;
-  refreshButton.disabled = !devtoolsIntegrationEnabled;
-  overlayButton.disabled = !devtoolsIntegrationEnabled;
+  applyDevtoolsEnabledState(devtoolsIntegrationEnabled, refreshDisabledMessage);
 });
+
+querySidebarVisibility();
+
+openSidebarButton.addEventListener('click', () => {
+  openSidebarFromDevtools();
+});
+
+function openSidebarFromDevtools() {
+  const openSidebar = () => {
+    chrome.runtime.sendMessage(
+      {
+        type: 'OPEN_XRAY_SIDEBAR_FOR_TAB',
+        tabId
+      },
+      (response) => {
+        if (chrome.runtime.lastError || !response || response.ok !== true) {
+          setStatus('Could not open the in-page sidebar on this tab.');
+          return;
+        }
+        updateOpenSidebarButton(true);
+        if (waitingForFreshInspection) {
+          setStatus('Sidebar opened. Choose a new element to inspect.');
+          return;
+        }
+        setStatus(devtoolsIntegrationEnabled
+          ? 'Sidebar opened.'
+          : 'Sidebar opened. DevTools is ready again.');
+      }
+    );
+  };
+
+  if (devtoolsIntegrationEnabled) {
+    openSidebar();
+    return;
+  }
+
+  chrome.storage.local.set({ [DEVTOOLS_ENABLED_KEY]: true }, () => {
+    devtoolsIntegrationEnabled = true;
+    applyDevtoolsEnabledState(true);
+    openSidebar();
+  });
+}
 
 refreshButton.addEventListener('click', () => {
   if (!devtoolsIntegrationEnabled) return;
@@ -51,8 +94,17 @@ removeDevtoolsButton.addEventListener('click', () => {
 });
 
 chrome.runtime.onMessage.addListener((message, sender) => {
-  if (!devtoolsIntegrationEnabled) return;
-  if (!message || message.type !== 'XRAY_CAPTURE_UPDATED') return;
+  if (!message) return;
+
+  if (message.type === 'XRAY_SIDEBAR_VISIBILITY_CHANGED') {
+    const senderTabId = sender && sender.tab && sender.tab.id;
+    const targetTabId = message.tabId || senderTabId;
+    if (targetTabId !== tabId) return;
+    updateOpenSidebarButton(!!message.visible);
+    return;
+  }
+
+  if (!devtoolsIntegrationEnabled || message.type !== 'XRAY_CAPTURE_UPDATED') return;
   const senderTabId = sender && sender.tab && sender.tab.id;
   const targetTabId = message.tabId || senderTabId;
   if (targetTabId !== tabId || !message.snapshot) return;
@@ -61,14 +113,17 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 });
 
 chrome.devtools.panels.elements.onSelectionChanged.addListener(() => {
-  if (currentMode !== 'selection') return;
+  if (!devtoolsIntegrationEnabled || currentMode !== 'selection') return;
   inspectCurrentSelection();
 });
 
-loadStoredCapture(false).then(() => {
-  if (!lastSnapshot) {
-    inspectCurrentSelection(false);
-  }
+chrome.devtools.network.onNavigated.addListener(() => {
+  if (!devtoolsIntegrationEnabled) return;
+  updateOpenSidebarButton(false);
+  waitingForFreshInspection = true;
+  chrome.storage.local.remove(storageKey);
+  refreshDisabledMessage = 'Open the sidebar to continue inspecting and re-enable DevTools.';
+  disableDevtoolsIntegration(refreshDisabledMessage);
 });
 
 async function loadStoredCapture(announce) {
@@ -84,6 +139,26 @@ async function loadStoredCapture(announce) {
       resolve(true);
     });
   });
+}
+
+function querySidebarVisibility() {
+  chrome.runtime.sendMessage(
+    {
+      type: 'QUERY_XRAY_SIDEBAR_STATUS_FOR_TAB',
+      tabId
+    },
+    (response) => {
+      if (chrome.runtime.lastError || !response) {
+        updateOpenSidebarButton(false);
+        return;
+      }
+      updateOpenSidebarButton(!!response.visible);
+    }
+  );
+}
+
+function updateOpenSidebarButton(isVisible) {
+  openSidebarButton.hidden = !!isVisible;
 }
 
 function inspectCurrentSelection(announce = true) {
@@ -102,6 +177,7 @@ function inspectCurrentSelection(announce = true) {
 }
 
 function renderSnapshot(snapshot, status) {
+  waitingForFreshInspection = false;
   lastSnapshot = snapshot;
   sourceBadge.classList.remove('idle');
   sourceBadge.textContent = snapshot.source === 'selection' ? 'Live Selection' : 'Overlay Capture';
@@ -252,53 +328,121 @@ function compactStateRows(rows) {
   });
 }
 
-function renderEmpty(message) {
+function renderStateCard(options) {
+  const {
+    eyebrow = 'Ready',
+    title = 'Nothing to show yet',
+    message = '',
+    tone = 'default',
+    actionHtml = ''
+  } = options || {};
+
   return `
-    <div class="empty-state">
-      <div class="empty-icon">⬡</div>
-      <div class="empty-title">Nothing to show yet</div>
+    <div class="empty-state empty-state-${escapeHtml(tone)}">
+      <div class="empty-eyebrow">${escapeHtml(eyebrow)}</div>
+      <div class="empty-icon-wrap">
+        <div class="empty-icon">⬡</div>
+      </div>
+      <div class="empty-title">${escapeHtml(title)}</div>
       <div class="empty-text">${escapeHtml(message)}</div>
+      ${actionHtml}
     </div>
   `;
 }
 
+function renderEmpty(message) {
+  return renderStateCard({
+    eyebrow: 'Ready',
+    title: 'Nothing to show yet',
+    message,
+    tone: 'default'
+  });
+}
+
+function renderReadyState(title, message) {
+  return renderStateCard({
+    eyebrow: 'Ready Again',
+    title,
+    message,
+    tone: 'ready'
+  });
+}
+
 function clearPanelView() {
   lastSnapshot = null;
-  currentMode = 'overlay';
+  currentMode = 'selection';
   boxExpanded = false;
   sourceBadge.textContent = 'Closed';
   sourceBadge.classList.add('idle');
   pageMeta.textContent = 'Xray view cleared. Use Refresh Selection or Use Last Overlay Capture to open it again.';
   setStatus('Panel view closed.');
-  root.innerHTML = `
-    <div class="empty-state">
-      <div class="empty-icon">⬡</div>
-      <div class="empty-title">Xray view closed</div>
-      <div class="empty-text">Use Refresh Selection to inspect the current DevTools selection, or load the last overlay capture again.</div>
-    </div>
-  `;
+  root.innerHTML = renderStateCard({
+    eyebrow: 'Closed',
+    title: 'Xray view closed',
+    message: 'Use Refresh Selection to inspect the current DevTools selection, or load the last overlay capture again.',
+    tone: 'closed'
+  });
 }
 
-function disableDevtoolsIntegration() {
+function applyDevtoolsEnabledState(enabled, disabledMessage = '') {
+  refreshButton.disabled = !enabled;
+  overlayButton.disabled = !enabled;
+  closeButton.disabled = !enabled;
+  removeDevtoolsButton.disabled = !enabled;
+
+  if (enabled) {
+    refreshDisabledMessage = '';
+    querySidebarVisibility();
+    currentMode = 'selection';
+    sourceBadge.textContent = 'Waiting';
+    sourceBadge.classList.add('idle');
+    pageMeta.textContent = 'Open Elements and select a node, or inspect from the overlay first.';
+    if (waitingForFreshInspection) {
+      root.innerHTML = renderReadyState(
+        'Sidebar opened',
+        'Click an element on the page or select one in Elements to inspect it again.'
+      );
+      setStatus('Sidebar opened. Choose a new element to inspect.');
+      return;
+    }
+
+    root.innerHTML = renderEmpty('Select an element in the Elements panel or use the in-page Xray overlay and click DevTools.');
+    setStatus('DevTools is ready again.');
+    return;
+  }
+
+  lastSnapshot = null;
+  currentMode = 'selection';
+  boxExpanded = false;
+  openSidebarButton.hidden = true;
+  sourceBadge.textContent = 'Paused';
+  sourceBadge.classList.add('idle');
+  pageMeta.textContent = 'DevTools paused until you reopen the sidebar.';
+  setStatus(disabledMessage || 'DevTools paused.');
+  root.innerHTML = `
+    ${renderStateCard({
+      eyebrow: 'Paused',
+      title: 'DevTools paused after refresh',
+      message: disabledMessage || 'Open the sidebar to continue inspecting and bring DevTools back.',
+      tone: 'paused',
+      actionHtml: '<button class="action-btn primary" id="paused-open-sidebar" type="button">Open Sidebar</button>'
+    })}
+  `;
+  bindPausedStateActions();
+}
+
+function disableDevtoolsIntegration(disabledMessage) {
   chrome.storage.local.set({ [DEVTOOLS_ENABLED_KEY]: false }, () => {
     devtoolsIntegrationEnabled = false;
-    refreshButton.disabled = true;
-    overlayButton.disabled = true;
-    closeButton.disabled = true;
-    lastSnapshot = null;
-    currentMode = 'overlay';
-    boxExpanded = false;
-    sourceBadge.textContent = 'Disabled';
-    sourceBadge.classList.add('idle');
-    pageMeta.textContent = 'Xray will be removed from DevTools after you close and reopen DevTools.';
-    setStatus('DevTools integration disabled.');
-    root.innerHTML = `
-      <div class="empty-state">
-        <div class="empty-icon">⬡</div>
-        <div class="empty-title">Xray DevTools disabled</div>
-        <div class="empty-text">Close and reopen DevTools to remove the Xray tab and sidebar. You can turn it back on from the Xray sidebar.</div>
-      </div>
-    `;
+    applyDevtoolsEnabledState(false, disabledMessage || 'Close and reopen DevTools to remove Xray completely, or open the sidebar to bring it back.');
+  });
+}
+
+function bindPausedStateActions() {
+  const pausedOpenSidebarButton = document.getElementById('paused-open-sidebar');
+  if (!pausedOpenSidebarButton) return;
+  pausedOpenSidebarButton.addEventListener('click', () => {
+    openSidebarFromDevtools();
   });
 }
 

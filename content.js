@@ -41,12 +41,16 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     instanceId: INSTANCE_ID
   };
 
-  const messageListener = (msg) => {
+  const messageListener = (msg, sender, sendResponse) => {
     if (!msg || !msg.type) return;
     if (msg.type === 'OPEN_XRAY_SIDEBAR') {
       if (msg.tabId) currentTabId = msg.tabId;
       sharedState.activeInstanceId = INSTANCE_ID;
       enable();
+      return;
+    }
+    if (msg.type === 'GET_XRAY_SIDEBAR_STATUS') {
+      sendResponse({ visible: !!document.getElementById('__dom_inspector_panel__') });
       return;
     }
     if (msg.type === 'TOGGLE_INSPECTOR') {
@@ -209,8 +213,8 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     }
     if (status) {
       status.textContent = enabled
-        ? 'Hover to preview, click to lock'
-        : 'Turn it on to inspect elements';
+        ? 'Click elements on the page to capture details'
+        : 'Turn it on to capture details from the page';
     }
   }
 
@@ -326,7 +330,6 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
 
   function showHome() {
     lockedTarget = null;
-    lastInspectedTarget = null;
     if (highlightEl) highlightEl.style.display = 'none';
     renderCurrentView();
   }
@@ -368,6 +371,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     if (existing) {
       panelEl = existing;
       panelScroll = panelEl.querySelector('.__dip_scroll__');
+      notifySidebarVisibility(true);
       syncPanelControls();
       loadDevtoolsPreference();
       loadPanelWidthPreference();
@@ -388,7 +392,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
             <span class="__dip_header_subtitle__">DOM Inspector</span>
           </div>
         </div>
-        <button class="__dip_close__" id="__dip_close_btn__" title="Close panel">✕</button>
+        <button class="__dip_close__" id="__dip_close_btn__" title="Hide sidebar">✕</button>
       </div>
       <div class="__dip_tabbar__">
         <button class="__dip_tab__ active" id="__dip_tab_home__" type="button">Home</button>
@@ -399,6 +403,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     `;
     document.body.appendChild(panelEl);
     panelScroll = panelEl.querySelector('.__dip_scroll__');
+    notifySidebarVisibility(true);
     bindResizeHandle();
     applyPanelWidth();
     applyPanelPosition();
@@ -455,7 +460,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     panelScroll.innerHTML = inspectorDisabled
       ? `<div class="__dip_empty__ __dip_content_fade__">
           <div class="__dip_empty_icon__">⬡</div>
-          <div class="__dip_empty_title__">Inspector is off</div>
+          <div class="__dip_empty_title__">Capture is off</div>
           <div class="__dip_empty_text__">Turn it back on from Settings to inspect elements.</div>
           <button class="__dip_empty_action__" type="button" id="__dip_empty_settings_btn__">Open Settings</button>
         </div>`
@@ -486,12 +491,12 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
         <div class="__dip_control__" id="__dip_inspector_control__">
           <div class="__dip_control_copy__">
             <div class="__dip_control_heading__">
-              <span class="__dip_control_title__">Inspector</span>
+              <span class="__dip_control_title__">Capture</span>
               <span class="__dip_control_badge__" id="__dip_inspector_badge__">On</span>
             </div>
-            <div class="__dip_control_desc__" id="__dip_inspector_status__">Hover to preview, click to lock</div>
+            <div class="__dip_control_desc__" id="__dip_inspector_status__">Click elements on the page to capture details</div>
           </div>
-          <label class="__dip_panel_toggle__" title="Toggle inspector">
+          <label class="__dip_panel_toggle__" title="Toggle page capture">
             <input type="checkbox" id="__dip_panel_toggle_input__" checked>
             <span class="__dip_panel_toggle_track__"><span class="__dip_panel_toggle_thumb__"></span></span>
           </label>
@@ -503,7 +508,12 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
               <span class="__dip_control_badge__" id="__dip_devtools_badge__">On</span>
             </div>
             <div class="__dip_control_desc__">Show Xray inside Chrome DevTools</div>
-            <div class="__dip_control_meta__" id="__dip_devtools_meta__"></div>
+            <div class="__dip_control_actions__">
+              <button class="__dip_secondary_btn__ __dip_secondary_btn_inline__" id="__dip_devtools_btn__" type="button">
+                Open in DevTools
+              </button>
+              <div class="__dip_control_meta__" id="__dip_devtools_meta__"></div>
+            </div>
           </div>
           <label class="__dip_panel_toggle__" title="Toggle DevTools integration">
             <input type="checkbox" id="__dip_devtools_toggle_input__" checked>
@@ -533,9 +543,6 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
             <button class="__dip_choice_btn__" id="__dip_position_right__" type="button">Right</button>
           </div>
         </div>
-        <button class="__dip_secondary_btn__" id="__dip_devtools_btn__" type="button">
-          Open in DevTools
-        </button>
         <button class="__dip_secondary_btn__ __dip_secondary_btn_danger__" id="__dip_reset_settings__" type="button">
           Reset All Settings
         </button>
@@ -636,6 +643,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     if (el) el.remove();
     panelEl = null;
     panelScroll = null;
+    notifySidebarVisibility(false);
     if (footerResetTimer) {
       clearTimeout(footerResetTimer);
       footerResetTimer = null;
@@ -1332,15 +1340,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
   }
 
   function handleCloseButton() {
-    isDevToolsOpen().then((devtoolsOpen) => {
-      if (devtoolsOpen) {
-        closePanelOnly();
-        return;
-      }
-      disable(true);
-    }).catch(() => {
-      disable(true);
-    });
+    closePanelOnly();
   }
 
   function isDevToolsOpen() {
@@ -1382,6 +1382,14 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     } catch (_) {
       return Promise.resolve(null);
     }
+  }
+
+  function notifySidebarVisibility(visible) {
+    safeSendMessage({
+      type: 'XRAY_SIDEBAR_VISIBILITY_CHANGED',
+      tabId: currentTabId || null,
+      visible: !!visible
+    });
   }
 
   function safeStorageSet(value) {

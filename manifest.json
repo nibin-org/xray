@@ -3,7 +3,7 @@
   "name": "Xray",
   "version": "1.0.0",
   "description": "Click any element to instantly inspect its DOM properties, styles, and box model.",
-  "permissions": ["activeTab", "scripting", "storage"],
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
   "devtools_page": "devtools.html",
   "background": {
     "service_worker": "background.js"

@@ -14,6 +14,7 @@
         <h1>Xray Inspector</h1>
       </div>
       <div class="actions">
+        <button id="open-sidebar" class="action-btn">Open Sidebar</button>
         <button id="refresh-selection" class="action-btn primary">Refresh Selection</button>
         <button id="load-overlay" class="action-btn">Use Last Overlay Capture</button>
         <button id="close-panel" class="action-btn action-btn-ghost">Close View</button>
@@ -37,8 +38,11 @@
     </section>
 
     <main id="panel-root" class="panel-root">
-      <div class="empty-state">
-        <div class="empty-icon">⬡</div>
+      <div class="empty-state empty-state-ready">
+        <div class="empty-eyebrow">Ready</div>
+        <div class="empty-icon-wrap">
+          <div class="empty-icon">⬡</div>
+        </div>
         <div class="empty-title">Xray is ready in DevTools</div>
         <div class="empty-text">Select an element in the Elements panel or use the in-page Xray overlay and click DevTools.</div>
       </div>
