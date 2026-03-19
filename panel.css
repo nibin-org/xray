@@ -346,19 +346,17 @@
 }
 
 .__dip_control_meta__ {
-  display: none !important;
+  display: block !important;
   font-size: 9px !important;
   line-height: 1.5 !important;
-  color: #7dd3fc !important;
-  padding: 4px 7px !important;
-  border-radius: 6px !important;
-  border: 1px solid rgba(34, 211, 238, 0.18) !important;
-  background: rgba(34, 211, 238, 0.08) !important;
+  color: #6b7280 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
 }
 
 .__dip_control_meta__.visible {
-  display: inline-flex !important;
-  align-items: center !important;
+  display: block !important;
 }
 
 .__dip_control_actions__ {

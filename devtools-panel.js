@@ -9,24 +9,34 @@ const openSidebarButton = document.getElementById('open-sidebar');
 const refreshButton = document.getElementById('refresh-selection');
 const overlayButton = document.getElementById('load-overlay');
 const closeButton = document.getElementById('close-panel');
-const removeDevtoolsButton = document.getElementById('remove-devtools');
 const DEVTOOLS_ENABLED_KEY = 'xray_devtools_enabled';
+const disableReasonKey = `xray_devtools_disable_reason_${tabId}`;
 let lastSnapshot = null;
 let currentMode = 'selection';
 let boxExpanded = false;
 let devtoolsIntegrationEnabled = false;
 let refreshDisabledMessage = '';
 let waitingForFreshInspection = false;
+let disabledState = 'paused';
+let disableReason = 'paused';
 
-chrome.storage.local.get([DEVTOOLS_ENABLED_KEY], (result) => {
+chrome.storage.local.get([DEVTOOLS_ENABLED_KEY, disableReasonKey], (result) => {
   devtoolsIntegrationEnabled = result[DEVTOOLS_ENABLED_KEY] === true;
+  disableReason = result[disableReasonKey] || 'paused';
   if (!devtoolsIntegrationEnabled) {
     applyDevtoolsEnabledState(false);
   }
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== 'local' || !changes[DEVTOOLS_ENABLED_KEY]) return;
+  if (areaName !== 'local') return;
+  if (changes[disableReasonKey]) {
+    disableReason = changes[disableReasonKey].newValue || 'paused';
+    if (!devtoolsIntegrationEnabled) {
+      applyDevtoolsEnabledState(false, refreshDisabledMessage);
+    }
+  }
+  if (!changes[DEVTOOLS_ENABLED_KEY]) return;
   devtoolsIntegrationEnabled = changes[DEVTOOLS_ENABLED_KEY].newValue === true;
   applyDevtoolsEnabledState(devtoolsIntegrationEnabled, refreshDisabledMessage);
 });
@@ -68,6 +78,8 @@ function openSidebarFromDevtools() {
 
   chrome.storage.local.set({ [DEVTOOLS_ENABLED_KEY]: true }, () => {
     devtoolsIntegrationEnabled = true;
+    disableReason = 'paused';
+    chrome.storage.local.remove(disableReasonKey);
     applyDevtoolsEnabledState(true);
     openSidebar();
   });
@@ -86,11 +98,15 @@ overlayButton.addEventListener('click', () => {
 });
 
 closeButton.addEventListener('click', () => {
-  clearPanelView();
-});
-
-removeDevtoolsButton.addEventListener('click', () => {
-  disableDevtoolsIntegration();
+  refreshDisabledMessage = 'Close and reopen DevTools to hide the Xray tab. Turn it back on from the Xray sidebar when you need it again.';
+  disableReason = 'toggle_off';
+  chrome.storage.local.set({
+    [DEVTOOLS_ENABLED_KEY]: false,
+    [disableReasonKey]: 'toggle_off'
+  }, () => {
+    devtoolsIntegrationEnabled = false;
+    applyDevtoolsEnabledState(false, refreshDisabledMessage);
+  });
 });
 
 chrome.runtime.onMessage.addListener((message, sender) => {
@@ -123,7 +139,7 @@ chrome.devtools.network.onNavigated.addListener(() => {
   waitingForFreshInspection = true;
   chrome.storage.local.remove(storageKey);
   refreshDisabledMessage = 'Open the sidebar to continue inspecting and re-enable DevTools.';
-  disableDevtoolsIntegration(refreshDisabledMessage);
+  disableDevtoolsIntegration(refreshDisabledMessage, 'paused');
 });
 
 async function loadStoredCapture(announce) {
@@ -368,30 +384,15 @@ function renderReadyState(title, message) {
   });
 }
 
-function clearPanelView() {
-  lastSnapshot = null;
-  currentMode = 'selection';
-  boxExpanded = false;
-  sourceBadge.textContent = 'Closed';
-  sourceBadge.classList.add('idle');
-  pageMeta.textContent = 'Xray view cleared. Use Refresh Selection or Use Last Overlay Capture to open it again.';
-  setStatus('Panel view closed.');
-  root.innerHTML = renderStateCard({
-    eyebrow: 'Closed',
-    title: 'Xray view closed',
-    message: 'Use Refresh Selection to inspect the current DevTools selection, or load the last overlay capture again.',
-    tone: 'closed'
-  });
-}
-
 function applyDevtoolsEnabledState(enabled, disabledMessage = '') {
   refreshButton.disabled = !enabled;
   overlayButton.disabled = !enabled;
   closeButton.disabled = !enabled;
-  removeDevtoolsButton.disabled = !enabled;
+  closeButton.hidden = !enabled;
 
   if (enabled) {
     refreshDisabledMessage = '';
+    disabledState = 'paused';
     querySidebarVisibility();
     currentMode = 'selection';
     sourceBadge.textContent = 'Waiting';
@@ -415,8 +416,31 @@ function applyDevtoolsEnabledState(enabled, disabledMessage = '') {
   currentMode = 'selection';
   boxExpanded = false;
   openSidebarButton.hidden = true;
-  sourceBadge.textContent = 'Paused';
+  sourceBadge.textContent = (disabledState === 'removed' || disableReason === 'toggle_off') ? 'Disabled' : 'Paused';
   sourceBadge.classList.add('idle');
+  if (disableReason === 'toggle_off') {
+    pageMeta.textContent = 'Xray DevTools is off until you turn it back on.';
+    setStatus(disabledMessage || 'DevTools turned off from the sidebar.');
+    root.innerHTML = renderStateCard({
+      eyebrow: 'Disabled',
+      title: 'Xray hidden from DevTools',
+      message: disabledMessage || 'Turn DevTools back on from the Xray sidebar, then reopen DevTools to show the Xray tab again.',
+      tone: 'closed'
+    });
+    return;
+  }
+  if (disabledState === 'removed') {
+    pageMeta.textContent = 'Xray DevTools is off until you enable it again.';
+    setStatus(disabledMessage || 'DevTools integration turned off.');
+    root.innerHTML = renderStateCard({
+      eyebrow: 'Disabled',
+      title: 'Xray removed from DevTools',
+      message: disabledMessage || 'Close and reopen DevTools to finish removing the Xray tab. You can turn it back on later from the Xray sidebar.',
+      tone: 'closed'
+    });
+    return;
+  }
+
   pageMeta.textContent = 'DevTools paused until you reopen the sidebar.';
   setStatus(disabledMessage || 'DevTools paused.');
   root.innerHTML = `
@@ -431,10 +455,22 @@ function applyDevtoolsEnabledState(enabled, disabledMessage = '') {
   bindPausedStateActions();
 }
 
-function disableDevtoolsIntegration(disabledMessage) {
-  chrome.storage.local.set({ [DEVTOOLS_ENABLED_KEY]: false }, () => {
+function disableDevtoolsIntegration(disabledMessage, reason = 'removed') {
+  disabledState = reason === 'paused' ? 'paused' : (reason === 'toggle_off' ? 'toggle_off' : 'removed');
+  disableReason = disabledState;
+  if (disabledState === 'removed' || disabledState === 'toggle_off') {
+    waitingForFreshInspection = false;
+  }
+  chrome.storage.local.set({ [DEVTOOLS_ENABLED_KEY]: false, [disableReasonKey]: disableReason }, () => {
     devtoolsIntegrationEnabled = false;
-    applyDevtoolsEnabledState(false, disabledMessage || 'Close and reopen DevTools to remove Xray completely, or open the sidebar to bring it back.');
+    applyDevtoolsEnabledState(
+      false,
+      disabledMessage || (disabledState === 'removed'
+        ? 'Close and reopen DevTools to finish removing Xray. You can turn it back on later from the Xray sidebar.'
+        : (disabledState === 'toggle_off'
+          ? 'Close and reopen DevTools to hide the Xray tab. Turn it back on from the Xray sidebar when you need it again.'
+          : 'Open the sidebar to continue inspecting and re-enable DevTools.'))
+    );
   });
 }
 

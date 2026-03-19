@@ -219,12 +219,10 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
   }
 
   function updateDevtoolsToggle(enabled, options = {}) {
-    const { showPending = false } = options;
     const input = document.getElementById('__dip_devtools_toggle_input__');
     const control = document.getElementById('__dip_devtools_control__');
     const badge = document.getElementById('__dip_devtools_badge__');
     const meta = document.getElementById('__dip_devtools_meta__');
-    const button = document.getElementById('__dip_devtools_btn__');
 
     if (input) input.checked = enabled;
     if (control) control.classList.toggle('active', enabled);
@@ -233,10 +231,9 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       badge.classList.toggle('off', !enabled);
     }
     if (meta) {
-      meta.classList.toggle('visible', showPending);
-      meta.textContent = showPending ? 'Restart DevTools to apply this change.' : '';
+      meta.classList.add('visible');
+      meta.textContent = 'Changes apply after you close and reopen DevTools.';
     }
-    if (button) button.disabled = !enabled;
   }
 
   function syncPanelControls() {
@@ -509,9 +506,6 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
             </div>
             <div class="__dip_control_desc__">Show Xray inside Chrome DevTools</div>
             <div class="__dip_control_actions__">
-              <button class="__dip_secondary_btn__ __dip_secondary_btn_inline__" id="__dip_devtools_btn__" type="button">
-                Open in DevTools
-              </button>
               <div class="__dip_control_meta__" id="__dip_devtools_meta__"></div>
             </div>
           </div>
@@ -557,23 +551,12 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
   }
 
   function bindSettingsControls() {
-    const devtoolsButton = document.getElementById('__dip_devtools_btn__');
     const devtoolsToggle = document.getElementById('__dip_devtools_toggle_input__');
     const inspectorToggle = document.getElementById('__dip_panel_toggle_input__');
     const positionLeft = document.getElementById('__dip_position_left__');
     const positionRight = document.getElementById('__dip_position_right__');
     const resetWidthButton = document.getElementById('__dip_reset_width__');
     const resetSettingsButton = document.getElementById('__dip_reset_settings__');
-
-    if (devtoolsButton) {
-      devtoolsButton.addEventListener('click', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        e.stopImmediatePropagation();
-        if (lastInspectedTarget) persistSnapshot(lastInspectedTarget, 'overlay');
-        showDevToolsHint();
-      });
-    }
 
     if (devtoolsToggle) {
       devtoolsToggle.addEventListener('change', (e) => {
@@ -582,7 +565,20 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
         devtoolsHintPending = true;
         devtoolsPersistedEnabled = enabled;
         updateDevtoolsToggle(enabled, { showPending: true });
-        safeStorageSet({ [DEVTOOLS_ENABLED_KEY]: enabled });
+        if (currentTabId) {
+          const disableReasonKey = `xray_devtools_disable_reason_${currentTabId}`;
+          if (enabled) {
+            safeStorageRemove([disableReasonKey]);
+            safeStorageSet({ [DEVTOOLS_ENABLED_KEY]: enabled });
+          } else {
+            safeStorageSet({
+              [DEVTOOLS_ENABLED_KEY]: enabled,
+              [disableReasonKey]: 'toggle_off'
+            });
+          }
+        } else {
+          safeStorageSet({ [DEVTOOLS_ENABLED_KEY]: enabled });
+        }
       });
     }
 
@@ -1318,36 +1314,8 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     };
   }
 
-  function showDevToolsHint() {
-    if (!currentTabId) {
-      updateFooterMessage('Open DevTools, then choose the Xray tab. Last inspected element is ready there.', 'info', true);
-      return;
-    }
-
-    safeSendMessage({ type: 'XRAY_DEVTOOLS_STATUS', tabId: currentTabId }).then((response) => {
-      if (response && response.enabled === false) {
-        updateFooterMessage('Xray DevTools is disabled. Turn it back on from the sidebar.', 'info', true);
-        return;
-      }
-      if (response && response.open) {
-        updateFooterMessage('DevTools is already open. Switch to the Xray tab there.', 'info', true);
-        return;
-      }
-      updateFooterMessage('Open DevTools, then choose the Xray tab. Last inspected element is ready there.', 'info', true);
-    }).catch(() => {
-      updateFooterMessage('Open DevTools, then choose the Xray tab. Last inspected element is ready there.', 'info', true);
-    });
-  }
-
   function handleCloseButton() {
     closePanelOnly();
-  }
-
-  function isDevToolsOpen() {
-    if (!currentTabId) return Promise.resolve(false);
-    return safeSendMessage({ type: 'XRAY_DEVTOOLS_STATUS', tabId: currentTabId })
-      .then((response) => !!(response && response.open))
-      .catch(() => false);
   }
 
   function updateFooterMessage(message, tone = 'default', temporary = false) {

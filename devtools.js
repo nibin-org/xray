@@ -20,7 +20,7 @@ function createDevtoolsSurfaces() {
     function updateSidebar() {
       if (!devtoolsEnabled) {
         sidebar.setObject(
-          { status: 'DevTools is paused. Open the Xray sidebar when you want to continue inspecting.' },
+          { status: 'Xray DevTools is off. Turn it back on from the Xray sidebar when you want to continue inspecting.' },
           'Xray'
         );
         return;

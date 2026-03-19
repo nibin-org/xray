@@ -1,6 +1,7 @@
 const PANEL_CSS_FILE = 'panel.css';
 const CONTENT_SCRIPT_FILE = 'content.js';
 const CAPTURE_KEY_PREFIX = 'xray_capture_';
+const DEVTOOLS_DISABLE_REASON_KEY_PREFIX = 'xray_devtools_disable_reason_';
 
 async function openSidebarForTab(tabId) {
   if (!tabId) return false;
@@ -67,6 +68,16 @@ function clearStoredCaptureForTab(tabId) {
   chrome.storage.local.remove(`${CAPTURE_KEY_PREFIX}${tabId}`);
 }
 
+function setDevtoolsDisableReason(tabId, reason) {
+  if (!tabId) return;
+  chrome.storage.local.set({ [`${DEVTOOLS_DISABLE_REASON_KEY_PREFIX}${tabId}`]: reason });
+}
+
+function clearDevtoolsDisableReason(tabId) {
+  if (!tabId) return;
+  chrome.storage.local.remove(`${DEVTOOLS_DISABLE_REASON_KEY_PREFIX}${tabId}`);
+}
+
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id) return;
   await openSidebarForTab(tab.id);
@@ -75,10 +86,12 @@ chrome.action.onClicked.addListener(async (tab) => {
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== 'loading') return;
   clearStoredCaptureForTab(tabId);
+  setDevtoolsDisableReason(tabId, 'paused');
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   clearStoredCaptureForTab(tabId);
+  clearDevtoolsDisableReason(tabId);
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
