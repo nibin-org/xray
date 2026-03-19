@@ -5,8 +5,10 @@
   "description": "Click any element to instantly inspect its DOM properties, styles, and box model.",
   "permissions": ["activeTab", "scripting", "storage"],
   "devtools_page": "devtools.html",
+  "background": {
+    "service_worker": "background.js"
+  },
   "action": {
-    "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

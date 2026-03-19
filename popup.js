@@ -6,7 +6,7 @@ const devtoolsMeta = document.getElementById('devtools-meta');
 const statusDot = document.getElementById('status-dot');
 const statusText = document.getElementById('status-text');
 const DEVTOOLS_ENABLED_KEY = 'xray_devtools_enabled';
-let devtoolsPersistedEnabled = true;
+let devtoolsPersistedEnabled = false;
 
 function setUI(enabled) {
   toggle.checked = enabled;
@@ -36,7 +36,7 @@ chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
 });
 
 chrome.storage.local.get([DEVTOOLS_ENABLED_KEY], (result) => {
-  devtoolsPersistedEnabled = result[DEVTOOLS_ENABLED_KEY] !== false;
+  devtoolsPersistedEnabled = result[DEVTOOLS_ENABLED_KEY] === true;
   setDevtoolsUI(devtoolsPersistedEnabled);
 });
 

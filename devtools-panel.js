@@ -13,7 +13,22 @@ const DEVTOOLS_ENABLED_KEY = 'xray_devtools_enabled';
 let lastSnapshot = null;
 let currentMode = 'overlay';
 let boxExpanded = false;
-let devtoolsIntegrationEnabled = true;
+let devtoolsIntegrationEnabled = false;
+
+chrome.storage.local.get([DEVTOOLS_ENABLED_KEY], (result) => {
+  devtoolsIntegrationEnabled = result[DEVTOOLS_ENABLED_KEY] === true;
+  if (!devtoolsIntegrationEnabled) {
+    refreshButton.disabled = true;
+    overlayButton.disabled = true;
+  }
+});
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !changes[DEVTOOLS_ENABLED_KEY]) return;
+  devtoolsIntegrationEnabled = changes[DEVTOOLS_ENABLED_KEY].newValue === true;
+  refreshButton.disabled = !devtoolsIntegrationEnabled;
+  overlayButton.disabled = !devtoolsIntegrationEnabled;
+});
 
 refreshButton.addEventListener('click', () => {
   if (!devtoolsIntegrationEnabled) return;
@@ -281,7 +296,7 @@ function disableDevtoolsIntegration() {
       <div class="empty-state">
         <div class="empty-icon">⬡</div>
         <div class="empty-title">Xray DevTools disabled</div>
-        <div class="empty-text">Close and reopen DevTools to remove the Xray tab and sidebar. You can turn it back on from the Xray popup.</div>
+        <div class="empty-text">Close and reopen DevTools to remove the Xray tab and sidebar. You can turn it back on from the Xray sidebar.</div>
       </div>
     `;
   });

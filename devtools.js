@@ -1,16 +1,16 @@
 const inspectedTabId = chrome.devtools.inspectedWindow.tabId;
 const DEVTOOLS_ENABLED_KEY = 'xray_devtools_enabled';
-let devtoolsEnabled = true;
+let devtoolsEnabled = false;
 
 chrome.storage.local.get([DEVTOOLS_ENABLED_KEY], (result) => {
-  devtoolsEnabled = result[DEVTOOLS_ENABLED_KEY] !== false;
+  devtoolsEnabled = result[DEVTOOLS_ENABLED_KEY] === true;
   if (!devtoolsEnabled) return;
   createDevtoolsSurfaces();
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local' || !changes[DEVTOOLS_ENABLED_KEY]) return;
-  devtoolsEnabled = changes[DEVTOOLS_ENABLED_KEY].newValue !== false;
+  devtoolsEnabled = changes[DEVTOOLS_ENABLED_KEY].newValue === true;
 });
 
 function createDevtoolsSurfaces() {

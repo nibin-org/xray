@@ -5,6 +5,14 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
 (() => {
   const INSTANCE_ID = `xray_${Date.now()}_${Math.random().toString(36).slice(2)}`;
   const DEFAULT_FOOTER_MESSAGE = 'Click any value to copy • ESC to turn off';
+  const SETTINGS_FOOTER_MESSAGE = 'Manage Xray settings and DevTools integration.';
+  const DEVTOOLS_ENABLED_KEY = 'xray_devtools_enabled';
+  const PANEL_WIDTH_KEY = 'xray_panel_width';
+  const PANEL_POSITION_KEY = 'xray_panel_position';
+  const DEFAULT_PANEL_WIDTH = 350;
+  const MIN_PANEL_WIDTH = 350;
+  const MAX_PANEL_WIDTH = 550;
+  const DEFAULT_PANEL_POSITION = 'right';
   const sharedState = window.__XRAY_INSPECTOR_SHARED__ || (window.__XRAY_INSPECTOR_SHARED__ = {
     activeInstanceId: null,
     inspectingEnabled: false
@@ -17,6 +25,14 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
   let highlightEl = null;
   let panelEl = null;
   let panelScroll = null;
+  let activeSidebarTab = 'settings';
+  let devtoolsPersistedEnabled = false;
+  let devtoolsHintPending = false;
+  let lastInspectedTarget = null;
+  let panelWidth = DEFAULT_PANEL_WIDTH;
+  let panelPosition = DEFAULT_PANEL_POSITION;
+  let resizeCleanup = null;
+  let resizeDragCleanup = null;
   let collapsedSections = new Set();
 
   window.__DOM_INSPECTOR_DISABLE__ = () => disable(false);
@@ -26,6 +42,13 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
   };
 
   const messageListener = (msg) => {
+    if (!msg || !msg.type) return;
+    if (msg.type === 'OPEN_XRAY_SIDEBAR') {
+      if (msg.tabId) currentTabId = msg.tabId;
+      sharedState.activeInstanceId = INSTANCE_ID;
+      enable();
+      return;
+    }
     if (msg.type === 'TOGGLE_INSPECTOR') {
       if (msg.tabId) currentTabId = msg.tabId;
       sharedState.activeInstanceId = INSTANCE_ID;
@@ -33,7 +56,15 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     }
   };
 
+  const storageChangeListener = (changes, areaName) => {
+    if (areaName !== 'local' || !changes[DEVTOOLS_ENABLED_KEY]) return;
+    const enabled = changes[DEVTOOLS_ENABLED_KEY].newValue === true;
+    devtoolsPersistedEnabled = enabled;
+    updateDevtoolsToggle(enabled, { showPending: devtoolsHintPending });
+  };
+
   chrome.runtime.onMessage.addListener(messageListener);
+  chrome.storage.onChanged.addListener(storageChangeListener);
 
   // ─── Enable / Disable ────────────────────────────────────────────
   function enable() {
@@ -41,7 +72,10 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     sharedState.inspectingEnabled = true;
     createHighlight();
     createPanel();
+    setDefaultSidebarTab();
     updatePanelToggle(true);
+    updateInspectorControl(true);
+    setInspectorStoredState(true);
     if (isEnabled) return;
     isEnabled = true;
     showHome();
@@ -60,11 +94,9 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     removeHighlight();
     removeInspectingListeners();
     updatePanelToggle(false);
+    updateInspectorControl(false);
     showHome(true);
-    safeStorageGetAll((items) => {
-      const keys = Object.keys(items).filter(k => k.startsWith('inspector_'));
-      if (keys.length) safeStorageRemove(keys);
-    });
+    setInspectorStoredState(false);
     safeSendMessage({ type: 'INSPECTOR_CLOSED' });
   }
 
@@ -74,7 +106,10 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     sharedState.inspectingEnabled = true;
     createHighlight();
     createPanel();
+    setDefaultSidebarTab();
     updatePanelToggle(true);
+    updateInspectorControl(true);
+    setInspectorStoredState(true);
     if (isEnabled) return;
     isEnabled = true;
     showHome();
@@ -86,6 +121,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
   function disable(notifyPopup = true) {
     isEnabled = false;
     lockedTarget = null;
+    lastInspectedTarget = null;
     removeInspectingListeners();
     if (sharedState.activeInstanceId === INSTANCE_ID) {
       sharedState.activeInstanceId = null;
@@ -93,10 +129,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     }
     removeHighlight();
     removePanel();
-    safeStorageGetAll((items) => {
-      const keys = Object.keys(items).filter(k => k.startsWith('inspector_'));
-      if (keys.length) safeStorageRemove(keys);
-    });
+    setInspectorStoredState(false);
     if (notifyPopup) {
       safeSendMessage({ type: 'INSPECTOR_CLOSED' });
     }
@@ -105,6 +138,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
   function destroy(notifyPopup = false) {
     disable(notifyPopup);
     chrome.runtime.onMessage.removeListener(messageListener);
+    chrome.storage.onChanged.removeListener(storageChangeListener);
     if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.instanceId === INSTANCE_ID) {
       delete window.__XRAY_INSPECTOR_INSTANCE__;
     }
@@ -118,20 +152,183 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     if (input) input.checked = checked;
   }
 
-  function showHome(disabled = false) {
-    lockedTarget = null;
-    if (highlightEl) highlightEl.style.display = 'none';
-    if (panelScroll) {
-      panelScroll.innerHTML = disabled
-        ? `<div class="__dip_empty__">
-          <div class="__dip_empty_icon__">⬡</div>
-          <div class="__dip_empty_text__">Inspector is off.<br>Toggle on to inspect elements.</div>
-        </div>`
-        : `<div class="__dip_empty__">
-          <div class="__dip_empty_icon__">⬡</div>
-          <div class="__dip_empty_text__">Click any element on the page<br>to inspect its properties</div>
-        </div>`;
+  function getMaxPanelWidth() {
+    return Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, window.innerWidth - 24));
+  }
+
+  function normalizePanelWidth(width) {
+    const numericWidth = Number(width);
+    if (!Number.isFinite(numericWidth)) return DEFAULT_PANEL_WIDTH;
+    return Math.max(MIN_PANEL_WIDTH, Math.min(getMaxPanelWidth(), Math.round(numericWidth)));
+  }
+
+  function applyPanelWidth() {
+    if (!panelEl) return;
+    panelEl.style.width = `${panelWidth}px`;
+    updateResizeMeta();
+  }
+
+  function normalizePanelPosition(position) {
+    return position === 'left' ? 'left' : 'right';
+  }
+
+  function applyPanelPosition() {
+    if (!panelEl) return;
+    panelEl.setAttribute('data-side', panelPosition);
+    updatePositionControls();
+  }
+
+  function updateResizeMeta() {
+    const value = document.getElementById('__dip_resize_value__');
+    if (value) value.textContent = `${panelWidth}px`;
+  }
+
+  function updatePositionControls() {
+    const badge = document.getElementById('__dip_position_value__');
+    const leftButton = document.getElementById('__dip_position_left__');
+    const rightButton = document.getElementById('__dip_position_right__');
+
+    if (badge) badge.textContent = panelPosition === 'left' ? 'Left' : 'Right';
+    if (leftButton) leftButton.classList.toggle('active', panelPosition === 'left');
+    if (rightButton) rightButton.classList.toggle('active', panelPosition === 'right');
+  }
+
+  function getDefaultFooterMessage() {
+    return activeSidebarTab === 'settings' ? SETTINGS_FOOTER_MESSAGE : DEFAULT_FOOTER_MESSAGE;
+  }
+
+  function updateInspectorControl(enabled) {
+    const control = document.getElementById('__dip_inspector_control__');
+    const badge = document.getElementById('__dip_inspector_badge__');
+    const status = document.getElementById('__dip_inspector_status__');
+
+    if (control) control.classList.toggle('active', enabled);
+    if (badge) {
+      badge.textContent = enabled ? 'On' : 'Off';
+      badge.classList.toggle('off', !enabled);
     }
+    if (status) {
+      status.textContent = enabled
+        ? 'Hover to preview, click to lock'
+        : 'Turn it on to inspect elements';
+    }
+  }
+
+  function updateDevtoolsToggle(enabled, options = {}) {
+    const { showPending = false } = options;
+    const input = document.getElementById('__dip_devtools_toggle_input__');
+    const control = document.getElementById('__dip_devtools_control__');
+    const badge = document.getElementById('__dip_devtools_badge__');
+    const meta = document.getElementById('__dip_devtools_meta__');
+    const button = document.getElementById('__dip_devtools_btn__');
+
+    if (input) input.checked = enabled;
+    if (control) control.classList.toggle('active', enabled);
+    if (badge) {
+      badge.textContent = enabled ? 'On' : 'Off';
+      badge.classList.toggle('off', !enabled);
+    }
+    if (meta) {
+      meta.classList.toggle('visible', showPending);
+      meta.textContent = showPending ? 'Restart DevTools to apply this change.' : '';
+    }
+    if (button) button.disabled = !enabled;
+  }
+
+  function syncPanelControls() {
+    updatePanelToggle(sharedState.inspectingEnabled);
+    updateInspectorControl(sharedState.inspectingEnabled);
+    updateDevtoolsToggle(devtoolsPersistedEnabled, { showPending: devtoolsHintPending });
+  }
+
+  function updateTabButtons() {
+    const homeTab = document.getElementById('__dip_tab_home__');
+    const settingsTab = document.getElementById('__dip_tab_settings__');
+    if (homeTab) homeTab.classList.toggle('active', activeSidebarTab === 'home');
+    if (settingsTab) settingsTab.classList.toggle('active', activeSidebarTab === 'settings');
+  }
+
+  function setActiveSidebarTab(tab, options = {}) {
+    activeSidebarTab = tab === 'settings' ? 'settings' : 'home';
+    updateTabButtons();
+    renderCurrentView();
+  }
+
+  function setDefaultSidebarTab() {
+    activeSidebarTab = lastInspectedTarget && document.contains(lastInspectedTarget)
+      ? 'home'
+      : 'settings';
+    updateTabButtons();
+    renderCurrentView();
+  }
+
+  function loadDevtoolsPreference() {
+    safeStorageGet([DEVTOOLS_ENABLED_KEY], (result) => {
+      devtoolsPersistedEnabled = result[DEVTOOLS_ENABLED_KEY] === true;
+      syncPanelControls();
+    });
+  }
+
+  function loadPanelWidthPreference() {
+    safeStorageGet([PANEL_WIDTH_KEY], (result) => {
+      panelWidth = normalizePanelWidth(result[PANEL_WIDTH_KEY]);
+      applyPanelWidth();
+    });
+  }
+
+  function loadPanelPositionPreference() {
+    safeStorageGet([PANEL_POSITION_KEY], (result) => {
+      panelPosition = normalizePanelPosition(result[PANEL_POSITION_KEY]);
+      applyPanelPosition();
+    });
+  }
+
+  function resetPanelWidth() {
+    panelWidth = DEFAULT_PANEL_WIDTH;
+    applyPanelWidth();
+    safeStorageRemove([PANEL_WIDTH_KEY]);
+    updateFooterMessage('Sidebar width reset to default.', 'info', true);
+  }
+
+  function resetAllSettings() {
+    panelWidth = DEFAULT_PANEL_WIDTH;
+    panelPosition = DEFAULT_PANEL_POSITION;
+    devtoolsPersistedEnabled = false;
+    devtoolsHintPending = false;
+
+    applyPanelWidth();
+    applyPanelPosition();
+    updateDevtoolsToggle(false, { showPending: false });
+
+    safeStorageRemove([DEVTOOLS_ENABLED_KEY, PANEL_WIDTH_KEY, PANEL_POSITION_KEY]);
+
+    if (!sharedState.inspectingEnabled) {
+      enableInspecting();
+    } else {
+      updatePanelToggle(true);
+      updateInspectorControl(true);
+      setInspectorStoredState(true);
+    }
+
+    setActiveSidebarTab('settings');
+    updateFooterMessage('Settings reset to defaults.', 'info', true);
+  }
+
+  function setInspectorStoredState(enabled) {
+    if (!currentTabId) return;
+    const storageKey = `inspector_${currentTabId}`;
+    if (enabled) {
+      safeStorageSet({ [storageKey]: true });
+      return;
+    }
+    safeStorageRemove([storageKey]);
+  }
+
+  function showHome() {
+    lockedTarget = null;
+    lastInspectedTarget = null;
+    if (highlightEl) highlightEl.style.display = 'none';
+    renderCurrentView();
   }
 
   // ─── Highlight ───────────────────────────────────────────────────
@@ -171,34 +368,40 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     if (existing) {
       panelEl = existing;
       panelScroll = panelEl.querySelector('.__dip_scroll__');
+      syncPanelControls();
+      loadDevtoolsPreference();
+      loadPanelWidthPreference();
+      loadPanelPositionPreference();
+      applyPanelWidth();
+      applyPanelPosition();
       return;
     }
     panelEl = document.createElement('div');
     panelEl.id = '__dom_inspector_panel__';
     panelEl.innerHTML = `
+      <div class="__dip_resize_handle__" id="__dip_resize_handle__" title="Drag to resize sidebar"></div>
       <div class="__dip_header__">
-        <div class="__dip_header_icon__">⬡</div>
-        <span class="__dip_header_title__">Xray</span>
-        <button class="__dip_devtools__" id="__dip_devtools_btn__" title="Use Xray in DevTools">DevTools</button>
-        <label class="__dip_panel_toggle__" id="__dip_panel_toggle__" title="Toggle inspector">
-          <input type="checkbox" id="__dip_panel_toggle_input__" checked>
-          <span class="__dip_panel_toggle_track__"><span class="__dip_panel_toggle_thumb__"></span></span>
-        </label>
+        <div class="__dip_header_brand__">
+          <div class="__dip_header_icon__">⬡</div>
+          <div class="__dip_header_copy__">
+            <span class="__dip_header_title__">Xray</span>
+            <span class="__dip_header_subtitle__">DOM Inspector</span>
+          </div>
+        </div>
         <button class="__dip_close__" id="__dip_close_btn__" title="Close panel">✕</button>
+      </div>
+      <div class="__dip_tabbar__">
+        <button class="__dip_tab__ active" id="__dip_tab_home__" type="button">Home</button>
+        <button class="__dip_tab__" id="__dip_tab_settings__" type="button">Settings</button>
       </div>
       <div class="__dip_scroll__"></div>
       <div class="__dip_footer__" id="__dip_footer__">${DEFAULT_FOOTER_MESSAGE}</div>
     `;
     document.body.appendChild(panelEl);
     panelScroll = panelEl.querySelector('.__dip_scroll__');
-
-    document.getElementById('__dip_devtools_btn__').addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      e.stopImmediatePropagation();
-      if (lockedTarget) persistSnapshot(lockedTarget, 'overlay');
-      showDevToolsHint();
-    });
+    bindResizeHandle();
+    applyPanelWidth();
+    applyPanelPosition();
 
     document.getElementById('__dip_close_btn__').addEventListener('click', (e) => {
       e.preventDefault();
@@ -207,17 +410,228 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       handleCloseButton();
     });
 
-    document.getElementById('__dip_panel_toggle_input__').addEventListener('change', (e) => {
-      e.stopPropagation();
-      if (e.target.checked) {
-        enableInspecting();
-      } else {
-        disableInspecting();
-      }
+    document.getElementById('__dip_tab_home__').addEventListener('click', () => {
+      setActiveSidebarTab('home');
     });
+
+    document.getElementById('__dip_tab_settings__').addEventListener('click', () => {
+      setActiveSidebarTab('settings');
+    });
+
+    updateTabButtons();
+    renderCurrentView();
+    syncPanelControls();
+    loadDevtoolsPreference();
+    loadPanelWidthPreference();
+    loadPanelPositionPreference();
+  }
+
+  function renderCurrentView() {
+    if (!panelScroll) panelScroll = document.querySelector('#__dom_inspector_panel__ .__dip_scroll__');
+    if (!panelScroll) return;
+
+    updateTabButtons();
+
+    if (activeSidebarTab === 'settings') {
+      renderSettingsView();
+      return;
+    }
+
+    if (!sharedState.inspectingEnabled) {
+      renderHomeEmpty(true);
+      return;
+    }
+
+    if (lastInspectedTarget && document.contains(lastInspectedTarget)) {
+      renderElementDetails(lastInspectedTarget);
+      return;
+    }
+
+    lastInspectedTarget = null;
+    renderHomeEmpty(false);
+  }
+
+  function renderHomeEmpty(inspectorDisabled) {
+    panelScroll.innerHTML = inspectorDisabled
+      ? `<div class="__dip_empty__ __dip_content_fade__">
+          <div class="__dip_empty_icon__">⬡</div>
+          <div class="__dip_empty_title__">Inspector is off</div>
+          <div class="__dip_empty_text__">Turn it back on from Settings to inspect elements.</div>
+          <button class="__dip_empty_action__" type="button" id="__dip_empty_settings_btn__">Open Settings</button>
+        </div>`
+      : `<div class="__dip_empty__ __dip_content_fade__">
+          <div class="__dip_empty_icon__">⬡</div>
+          <div class="__dip_empty_title__">Ready to inspect</div>
+          <div class="__dip_empty_text__">Click any element on the page<br>to inspect its properties</div>
+        </div>`;
+
+    const settingsButton = document.getElementById('__dip_empty_settings_btn__');
+    if (settingsButton) {
+      settingsButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setActiveSidebarTab('settings');
+      });
+    }
+
+    updateFooterMessage(getDefaultFooterMessage());
+  }
+
+  function renderSettingsView() {
+    panelScroll.innerHTML = `
+      <div class="__dip_controls__ __dip_content_fade__">
+        <div class="__dip_settings_intro__">
+          <div class="__dip_settings_title__">Settings</div>
+          <div class="__dip_settings_text__">Control how Xray behaves on the page and inside DevTools.</div>
+        </div>
+        <div class="__dip_control__" id="__dip_inspector_control__">
+          <div class="__dip_control_copy__">
+            <div class="__dip_control_heading__">
+              <span class="__dip_control_title__">Inspector</span>
+              <span class="__dip_control_badge__" id="__dip_inspector_badge__">On</span>
+            </div>
+            <div class="__dip_control_desc__" id="__dip_inspector_status__">Hover to preview, click to lock</div>
+          </div>
+          <label class="__dip_panel_toggle__" title="Toggle inspector">
+            <input type="checkbox" id="__dip_panel_toggle_input__" checked>
+            <span class="__dip_panel_toggle_track__"><span class="__dip_panel_toggle_thumb__"></span></span>
+          </label>
+        </div>
+        <div class="__dip_control__" id="__dip_devtools_control__">
+          <div class="__dip_control_copy__">
+            <div class="__dip_control_heading__">
+              <span class="__dip_control_title__">DevTools</span>
+              <span class="__dip_control_badge__" id="__dip_devtools_badge__">On</span>
+            </div>
+            <div class="__dip_control_desc__">Show Xray inside Chrome DevTools</div>
+            <div class="__dip_control_meta__" id="__dip_devtools_meta__"></div>
+          </div>
+          <label class="__dip_panel_toggle__" title="Toggle DevTools integration">
+            <input type="checkbox" id="__dip_devtools_toggle_input__" checked>
+            <span class="__dip_panel_toggle_track__"><span class="__dip_panel_toggle_thumb__"></span></span>
+          </label>
+        </div>
+        <div class="__dip_control__">
+          <div class="__dip_control_copy__">
+            <div class="__dip_control_heading__">
+              <span class="__dip_control_title__">Sidebar Width</span>
+              <span class="__dip_control_badge__" id="__dip_resize_value__">${panelWidth}px</span>
+            </div>
+            <div class="__dip_control_desc__">Drag the outer edge of the sidebar to resize it. Xray will remember your width.</div>
+          </div>
+          <button class="__dip_choice_btn__" id="__dip_reset_width__" type="button">Reset</button>
+        </div>
+        <div class="__dip_control__">
+          <div class="__dip_control_copy__">
+            <div class="__dip_control_heading__">
+              <span class="__dip_control_title__">Sidebar Position</span>
+              <span class="__dip_control_badge__" id="__dip_position_value__">${panelPosition === 'left' ? 'Left' : 'Right'}</span>
+            </div>
+            <div class="__dip_control_desc__">Choose which side of the page Xray should dock to.</div>
+          </div>
+          <div class="__dip_choice_group__" role="group" aria-label="Sidebar position">
+            <button class="__dip_choice_btn__" id="__dip_position_left__" type="button">Left</button>
+            <button class="__dip_choice_btn__" id="__dip_position_right__" type="button">Right</button>
+          </div>
+        </div>
+        <button class="__dip_secondary_btn__" id="__dip_devtools_btn__" type="button">
+          Open in DevTools
+        </button>
+        <button class="__dip_secondary_btn__ __dip_secondary_btn_danger__" id="__dip_reset_settings__" type="button">
+          Reset All Settings
+        </button>
+      </div>
+    `;
+
+    bindSettingsControls();
+    syncPanelControls();
+    updateResizeMeta();
+    updatePositionControls();
+    updateFooterMessage(getDefaultFooterMessage());
+  }
+
+  function bindSettingsControls() {
+    const devtoolsButton = document.getElementById('__dip_devtools_btn__');
+    const devtoolsToggle = document.getElementById('__dip_devtools_toggle_input__');
+    const inspectorToggle = document.getElementById('__dip_panel_toggle_input__');
+    const positionLeft = document.getElementById('__dip_position_left__');
+    const positionRight = document.getElementById('__dip_position_right__');
+    const resetWidthButton = document.getElementById('__dip_reset_width__');
+    const resetSettingsButton = document.getElementById('__dip_reset_settings__');
+
+    if (devtoolsButton) {
+      devtoolsButton.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (lastInspectedTarget) persistSnapshot(lastInspectedTarget, 'overlay');
+        showDevToolsHint();
+      });
+    }
+
+    if (devtoolsToggle) {
+      devtoolsToggle.addEventListener('change', (e) => {
+        e.stopPropagation();
+        const enabled = e.target.checked;
+        devtoolsHintPending = true;
+        devtoolsPersistedEnabled = enabled;
+        updateDevtoolsToggle(enabled, { showPending: true });
+        safeStorageSet({ [DEVTOOLS_ENABLED_KEY]: enabled });
+      });
+    }
+
+    if (inspectorToggle) {
+      inspectorToggle.addEventListener('change', (e) => {
+        e.stopPropagation();
+        if (e.target.checked) {
+          enableInspecting();
+        } else {
+          disableInspecting();
+        }
+      });
+    }
+
+    if (positionLeft) {
+      positionLeft.addEventListener('click', (e) => {
+        e.stopPropagation();
+        panelPosition = 'left';
+        applyPanelPosition();
+        safeStorageSet({ [PANEL_POSITION_KEY]: panelPosition });
+      });
+    }
+
+    if (positionRight) {
+      positionRight.addEventListener('click', (e) => {
+        e.stopPropagation();
+        panelPosition = 'right';
+        applyPanelPosition();
+        safeStorageSet({ [PANEL_POSITION_KEY]: panelPosition });
+      });
+    }
+
+    if (resetWidthButton) {
+      resetWidthButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        resetPanelWidth();
+      });
+    }
+
+    if (resetSettingsButton) {
+      resetSettingsButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        resetAllSettings();
+      });
+    }
   }
 
   function removePanel() {
+    if (resizeDragCleanup) {
+      resizeDragCleanup();
+      resizeDragCleanup = null;
+    }
+    if (resizeCleanup) {
+      resizeCleanup();
+      resizeCleanup = null;
+    }
     const el = document.getElementById('__dom_inspector_panel__');
     if (el) el.remove();
     panelEl = null;
@@ -230,6 +644,66 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
 
   function closePanelOnly() {
     removePanel();
+  }
+
+  function bindResizeHandle() {
+    const handle = document.getElementById('__dip_resize_handle__');
+    if (!handle) return;
+
+    handle.addEventListener('mousedown', (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const startWidth = panelWidth;
+      const startX = event.clientX;
+      const previousCursor = document.body.style.cursor;
+      const previousUserSelect = document.body.style.userSelect;
+
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+
+      const onMouseMove = (moveEvent) => {
+        const delta = moveEvent.clientX - startX;
+        const nextWidth = normalizePanelWidth(
+          panelPosition === 'left' ? startWidth + delta : startWidth - delta
+        );
+        if (nextWidth === panelWidth) return;
+        panelWidth = nextWidth;
+        applyPanelWidth();
+      };
+
+      const onMouseUp = () => {
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+        resizeDragCleanup = null;
+        safeStorageSet({ [PANEL_WIDTH_KEY]: panelWidth });
+      };
+
+      window.addEventListener('mousemove', onMouseMove);
+      window.addEventListener('mouseup', onMouseUp);
+
+      resizeDragCleanup = () => {
+        document.body.style.cursor = previousCursor;
+        document.body.style.userSelect = previousUserSelect;
+        window.removeEventListener('mousemove', onMouseMove);
+        window.removeEventListener('mouseup', onMouseUp);
+      };
+    });
+
+    window.addEventListener('resize', handleViewportResize);
+    resizeCleanup = () => {
+      window.removeEventListener('resize', handleViewportResize);
+    };
+  }
+
+  function handleViewportResize() {
+    const normalizedWidth = normalizePanelWidth(panelWidth);
+    if (normalizedWidth === panelWidth) return;
+    panelWidth = normalizedWidth;
+    applyPanelWidth();
+    safeStorageSet({ [PANEL_WIDTH_KEY]: panelWidth });
   }
 
   function addInspectingListeners() {
@@ -317,8 +791,17 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
 
   // ─── Render ──────────────────────────────────────────────────────
   function renderPanel(el) {
+    lastInspectedTarget = el;
+    if (activeSidebarTab !== 'home') {
+      setActiveSidebarTab('home');
+      return;
+    }
+    renderElementDetails(el);
+  }
+
+  function renderElementDetails(el) {
     if (!panelScroll) panelScroll = document.querySelector('#__dom_inspector_panel__ .__dip_scroll__');
-    if (!panelScroll) return;
+    if (!panelScroll || !el) return;
     const cs = window.getComputedStyle(el);
     const rect = el.getBoundingClientRect();
     const sections = [
@@ -373,7 +856,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       });
     });
 
-    updateFooterMessage(DEFAULT_FOOTER_MESSAGE);
+    updateFooterMessage(getDefaultFooterMessage());
   }
 
   // ─── Section Helpers ─────────────────────────────────────────────
@@ -835,7 +1318,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
 
     safeSendMessage({ type: 'XRAY_DEVTOOLS_STATUS', tabId: currentTabId }).then((response) => {
       if (response && response.enabled === false) {
-        updateFooterMessage('Xray DevTools is disabled. Turn it back on from the popup.', 'info', true);
+        updateFooterMessage('Xray DevTools is disabled. Turn it back on from the sidebar.', 'info', true);
         return;
       }
       if (response && response.open) {
@@ -878,7 +1361,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     footer.setAttribute('data-tone', tone);
     if (temporary) {
       footerResetTimer = setTimeout(() => {
-        footer.textContent = DEFAULT_FOOTER_MESSAGE;
+        footer.textContent = getDefaultFooterMessage();
         footer.setAttribute('data-tone', 'default');
       }, 3200);
     }
@@ -916,6 +1399,20 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       chrome.storage.local.remove(keys);
     } catch (_) {
       // Ignore invalidated extension contexts after reloads.
+    }
+  }
+
+  function safeStorageGet(keys, callback) {
+    if (!hasExtensionContext()) {
+      callback({});
+      return;
+    }
+    try {
+      chrome.storage.local.get(keys, (items) => {
+        callback(items || {});
+      });
+    } catch (_) {
+      callback({});
     }
   }
 
