@@ -183,6 +183,12 @@ h1 {
   gap: 6px;
 }
 
+.section-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 4px;
+}
+
 .section-compact .section-body {
   gap: 5px;
 }

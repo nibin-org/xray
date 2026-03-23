@@ -210,7 +210,7 @@ function renderSnapshot(snapshot, status) {
 
   const sections = [
     renderIdentitySection(snapshot.identity),
-    renderRowsSection('Element Details', snapshot.elementProps, 'section-props section-compact'),
+    renderRowsSection('Element Details', snapshot.elementProps, 'section-props section-compact', renderImageDownloadAction(snapshot.imageSrc)),
     renderGroupedSection('Layout & State', insightGroups, 'section-insights'),
     renderRowsSection('Visual', snapshot.visual, 'section-visual section-compact'),
     renderRowsSection('Useful Attributes', snapshot.attributes, 'section-attrs section-compact'),
@@ -219,6 +219,7 @@ function renderSnapshot(snapshot, status) {
 
   root.innerHTML = sections || renderEmpty('No meaningful properties for this element yet.');
   bindCopyInteractions();
+  bindImageDownloadAction();
 }
 
 function renderIdentitySection(identity) {
@@ -237,7 +238,7 @@ function renderIdentitySection(identity) {
   `;
 }
 
-function renderRowsSection(title, rows, className) {
+function renderRowsSection(title, rows, className, actionHtml = '') {
   if (!rows || !rows.length) return '';
   return `
     <section class="section ${className || ''}">
@@ -246,8 +247,18 @@ function renderRowsSection(title, rows, className) {
       </div>
       <div class="section-body">
         ${renderRows(rows)}
+        ${actionHtml}
       </div>
     </section>
+  `;
+}
+
+function renderImageDownloadAction(imageSrc) {
+  if (!imageSrc) return '';
+  return `
+    <div class="section-actions">
+      <button class="action-btn" type="button" id="download-image" data-image-url="${escapeAttr(imageSrc)}">Download Image</button>
+    </div>
   `;
 }
 
@@ -509,6 +520,24 @@ function bindCopyInteractions() {
   });
 }
 
+function bindImageDownloadAction() {
+  const button = document.getElementById('download-image');
+  if (!button) return;
+
+  button.addEventListener('click', () => {
+    const imageUrl = button.getAttribute('data-image-url') || '';
+    if (!imageUrl) return;
+
+    chrome.runtime.sendMessage({ type: 'XRAY_DOWNLOAD_IMAGE', url: imageUrl }, (response) => {
+      if (chrome.runtime.lastError || !response || response.ok !== true) {
+        setStatus('Could not download this image.');
+        return;
+      }
+      setStatus('Image download started.');
+    });
+  });
+}
+
 function setStatus(message) {
   statusText.textContent = message;
 }
@@ -668,6 +697,7 @@ function buildDevtoolsSnapshot() {
   const layout = [];
   const visual = [];
   const attributes = [];
+  let imageSrc = '';
 
   if (el.hasAttribute('title')) {
     const title = el.getAttribute('title') || '(empty)';
@@ -684,6 +714,7 @@ function buildDevtoolsSnapshot() {
   if (tag === 'img') {
     if (el.hasAttribute('src')) {
       const src = el.getAttribute('src') || '(empty)';
+      imageSrc = el.currentSrc || el.getAttribute('src') || '';
       elementProps.push(makeDataRow('src', truncateValue(src, 56), '', src));
     }
     if (el.hasAttribute('alt')) elementProps.push(makeDataRow('alt', truncateValue(el.getAttribute('alt') || '(empty)', 48), 'neutral', el.getAttribute('alt') || '(empty)'));
@@ -785,6 +816,7 @@ function buildDevtoolsSnapshot() {
     pageUrl: location.href,
     identity,
     elementProps,
+    imageSrc,
     state,
     layout,
     parentLayout,

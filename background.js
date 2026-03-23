@@ -78,6 +78,17 @@ function clearDevtoolsDisableReason(tabId) {
   chrome.storage.local.remove(`${DEVTOOLS_DISABLE_REASON_KEY_PREFIX}${tabId}`);
 }
 
+function buildDownloadFilename(url) {
+  try {
+    const parsed = new URL(url);
+    const rawName = parsed.pathname.split('/').filter(Boolean).pop() || 'xray-image';
+    const cleanedName = rawName.split('?')[0].split('#')[0];
+    return cleanedName || 'xray-image';
+  } catch (_) {
+    return 'xray-image';
+  }
+}
+
 chrome.action.onClicked.addListener(async (tab) => {
   if (!tab || !tab.id) return;
   await openSidebarForTab(tab.id);
@@ -117,6 +128,35 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         console.warn('Xray could not query the sidebar status.', error);
         sendResponse({ ok: false, visible: false });
       });
+
+    return true;
+  }
+
+  if (message.type === 'XRAY_DOWNLOAD_IMAGE') {
+    const imageUrl = typeof message.url === 'string' ? message.url.trim() : '';
+    if (!imageUrl) {
+      sendResponse({ ok: false, error: 'Missing image URL.' });
+      return;
+    }
+
+    chrome.downloads.download(
+      {
+        url: imageUrl,
+        filename: buildDownloadFilename(imageUrl),
+        conflictAction: 'uniquify',
+        saveAs: false
+      },
+      (downloadId) => {
+        if (chrome.runtime.lastError || typeof downloadId !== 'number') {
+          sendResponse({
+            ok: false,
+            error: chrome.runtime.lastError ? chrome.runtime.lastError.message : 'Download could not start.'
+          });
+          return;
+        }
+        sendResponse({ ok: true, downloadId });
+      }
+    );
 
     return true;
   }

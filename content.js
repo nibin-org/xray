@@ -860,6 +860,22 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       });
     });
 
+    const downloadButton = document.getElementById('__dip_download_image_btn__');
+    if (downloadButton) {
+      downloadButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const imageUrl = downloadButton.getAttribute('data-image-url') || '';
+        if (!imageUrl) return;
+        safeSendMessage({ type: 'XRAY_DOWNLOAD_IMAGE', url: imageUrl }).then((response) => {
+          if (response && response.ok) {
+            updateFooterMessage('Image download started.', 'info', true);
+            return;
+          }
+          updateFooterMessage('Could not download this image.', 'info', true);
+        });
+      });
+    }
+
     updateFooterMessage(getDefaultFooterMessage());
   }
 
@@ -919,6 +935,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
   function renderElementProps(el) {
     const rows = [];
     const tag = el.tagName.toLowerCase();
+    let imageSrc = '';
 
     if (el.hasAttribute('title')) {
       const title = el.getAttribute('title') || '(empty)';
@@ -935,6 +952,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     if (tag === 'img') {
       if (el.hasAttribute('src')) {
         const src = el.getAttribute('src') || '(empty)';
+        imageSrc = el.currentSrc || el.getAttribute('src') || '';
         rows.push(row('src', truncateValue(src, 56), '', src));
       }
       if (el.hasAttribute('alt')) rows.push(row('alt', truncateValue(el.getAttribute('alt') || '(empty)', 48), 'neutral', el.getAttribute('alt') || '(empty)'));
@@ -965,7 +983,13 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       rows.push(row('for', el.getAttribute('for')));
     }
 
-    return rows.length ? section('element', '🧩', 'Element Details', rows.join('')) : '';
+    const actions = imageSrc
+      ? `<div class="__dip_section_actions__">
+          <button class="__dip_secondary_btn__ __dip_secondary_btn_inline__" id="__dip_download_image_btn__" type="button" data-image-url="${escAttr(imageSrc)}">Download Image</button>
+        </div>`
+      : '';
+
+    return rows.length ? section('element', '🧩', 'Element Details', `${rows.join('')}${actions}`) : '';
   }
 
   function renderBoxModel(cs, rect) {
@@ -1130,6 +1154,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     const layout = [];
     const visual = [];
     const attributes = [];
+    let imageSrc = '';
 
     if (el.id) identityRows.push(makeDataRow('id', '#' + el.id));
     if (el.classList.length) identityRows.push(makeDataRow('classes', '.' + [...el.classList].slice(0, 4).join(' .')));
@@ -1150,6 +1175,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     if (tag === 'img') {
       if (el.hasAttribute('src')) {
         const src = el.getAttribute('src') || '(empty)';
+        imageSrc = el.currentSrc || el.getAttribute('src') || '';
         elementProps.push(makeDataRow('src', truncateValue(src, 56), '', src));
       }
       if (el.hasAttribute('alt')) elementProps.push(makeDataRow('alt', truncateValue(el.getAttribute('alt') || '(empty)', 48), 'neutral', el.getAttribute('alt') || '(empty)'));
@@ -1236,6 +1262,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
         rows: identityRows
       },
       elementProps,
+      imageSrc,
       state,
       layout,
       parentLayout,

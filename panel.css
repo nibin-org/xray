@@ -598,6 +598,12 @@
   gap: 5px !important;
 }
 
+.__dip_section_actions__ {
+  display: flex !important;
+  justify-content: flex-start !important;
+  margin-top: 4px !important;
+}
+
 /* Property Row */
 .__dip_row__ {
   display: flex !important;
