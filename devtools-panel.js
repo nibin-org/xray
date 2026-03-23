@@ -210,7 +210,7 @@ function renderSnapshot(snapshot, status) {
 
   const sections = [
     renderIdentitySection(snapshot.identity),
-    renderRowsSection('Element Props', snapshot.elementProps, 'section-props section-compact'),
+    renderRowsSection('Element Details', snapshot.elementProps, 'section-props section-compact'),
     renderGroupedSection('Layout & State', insightGroups, 'section-insights'),
     renderRowsSection('Visual', snapshot.visual, 'section-visual section-compact'),
     renderRowsSection('Useful Attributes', snapshot.attributes, 'section-attrs section-compact'),
@@ -633,10 +633,6 @@ function buildDevtoolsSnapshot() {
     return `${cs.gridColumnStart} / ${cs.gridColumnEnd} • ${cs.gridRowStart} / ${cs.gridRowEnd}`;
   }
 
-  function hasUsefulTransition(cs) {
-    return cs.transition && cs.transition !== 'all 0s ease 0s';
-  }
-
   function isZeroValue(value) {
     return Number.parseFloat(value) === 0;
   }
@@ -723,9 +719,6 @@ function buildDevtoolsSnapshot() {
   if (el.getAttribute('contenteditable') === 'true') state.push(makeDataRow('editable', 'true'));
   if (cs.visibility !== 'visible') state.push(makeDataRow('visibility', cs.visibility, 'highlight'));
   if (cs.pointerEvents === 'none') state.push(makeDataRow('pointer-events', cs.pointerEvents, 'highlight'));
-  if (cs.userSelect !== 'auto' && cs.userSelect !== 'text') state.push(makeDataRow('user-select', cs.userSelect));
-  if (cs.cursor !== 'auto') state.push(makeDataRow('cursor', cs.cursor));
-  if (hasUsefulTransition(cs)) state.push(makeDataRow('transition', truncateValue(cs.transition, 40), 'neutral', cs.transition));
 
   layout.push(makeDataRow('size', `${Math.round(rect.width)}px × ${Math.round(rect.height)}px`));
   layout.push(makeDataRow('display', cs.display, cs.display === 'none' ? 'highlight' : ''));

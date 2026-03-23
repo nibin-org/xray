@@ -814,9 +814,9 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       renderState(el, cs),
       renderLayout(rect, cs),
       renderParentLayout(el, cs),
-      renderBoxModel(cs, rect),
       renderVisual(el, cs),
-      renderAttributes(el)
+      renderAttributes(el),
+      renderBoxModel(cs, rect)
     ].filter(Boolean).join('');
 
     panelScroll.innerHTML = `
@@ -849,13 +849,13 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       });
     });
 
-    panelScroll.querySelectorAll('.__dip_selector__').forEach(s => {
-      s.addEventListener('click', (e) => {
+    panelScroll.querySelectorAll('.__dip_selector__').forEach(node => {
+      node.addEventListener('click', (e) => {
         e.stopPropagation();
-        navigator.clipboard.writeText(s.textContent).then(() => {
-          const orig = s.textContent;
-          s.textContent = '✓ Copied!';
-          setTimeout(() => s.textContent = orig, 1200);
+        navigator.clipboard.writeText(node.textContent).then(() => {
+          const orig = node.textContent;
+          node.textContent = '✓ Copied!';
+          setTimeout(() => { node.textContent = orig; }, 1200);
         });
       });
     });
@@ -965,7 +965,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       rows.push(row('for', el.getAttribute('for')));
     }
 
-    return rows.length ? section('element', '🧩', 'Element Props', rows.join('')) : '';
+    return rows.length ? section('element', '🧩', 'Element Details', rows.join('')) : '';
   }
 
   function renderBoxModel(cs, rect) {
@@ -1027,10 +1027,7 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
       el.hasAttribute('tabindex') ? row('tabindex', el.getAttribute('tabindex')) : '',
       el.getAttribute('contenteditable') === 'true' ? row('editable', 'true') : '',
       cs.visibility !== 'visible' ? row('visibility', cs.visibility, 'highlight') : '',
-      cs.pointerEvents === 'none' ? row('pointer-events', cs.pointerEvents, 'highlight') : '',
-      cs.userSelect !== 'auto' && cs.userSelect !== 'text' ? row('user-select', cs.userSelect) : '',
-      cs.cursor !== 'auto' ? row('cursor', cs.cursor) : '',
-      hasUsefulTransition(cs) ? row('transition', truncateValue(cs.transition, 40), 'neutral', cs.transition) : ''
+      cs.pointerEvents === 'none' ? row('pointer-events', cs.pointerEvents, 'highlight') : ''
     ].filter(Boolean).join('');
 
     return rows ? section('state', '⚙️', 'State', rows) : '';
@@ -1188,9 +1185,6 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     if (el.getAttribute('contenteditable') === 'true') state.push(makeDataRow('editable', 'true'));
     if (cs.visibility !== 'visible') state.push(makeDataRow('visibility', cs.visibility, 'highlight'));
     if (cs.pointerEvents === 'none') state.push(makeDataRow('pointer-events', cs.pointerEvents, 'highlight'));
-    if (cs.userSelect !== 'auto' && cs.userSelect !== 'text') state.push(makeDataRow('user-select', cs.userSelect));
-    if (cs.cursor !== 'auto') state.push(makeDataRow('cursor', cs.cursor));
-    if (hasUsefulTransition(cs)) state.push(makeDataRow('transition', truncateValue(cs.transition, 40), 'neutral', cs.transition));
 
     layout.push(makeDataRow('size', `${Math.round(rect.width)}px × ${Math.round(rect.height)}px`));
     layout.push(makeDataRow('display', cs.display, cs.display === 'none' ? 'highlight' : ''));
@@ -1513,10 +1507,6 @@ if (window.__XRAY_INSPECTOR_INSTANCE__ && window.__XRAY_INSPECTOR_INSTANCE__.des
     const col = `${cs.gridColumnStart} / ${cs.gridColumnEnd}`;
     const row = `${cs.gridRowStart} / ${cs.gridRowEnd}`;
     return `${col} • ${row}`;
-  }
-
-  function hasUsefulTransition(cs) {
-    return cs.transition && cs.transition !== 'all 0s ease 0s';
   }
 
   function escHtml(s) {
