@@ -186,6 +186,8 @@ h1 {
 .section-actions {
   display: flex;
   justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
   margin-top: 4px;
 }
 

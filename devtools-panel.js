@@ -56,7 +56,9 @@ function openSidebarFromDevtools() {
       },
       (response) => {
         if (chrome.runtime.lastError || !response || response.ok !== true) {
-          setStatus('Could not open the in-page sidebar on this tab.');
+          setStatus(waitingForFreshInspection
+            ? 'Use the Xray toolbar button on this page to reopen the sidebar after a reload.'
+            : 'Could not open the in-page sidebar on this tab.');
           return;
         }
         updateOpenSidebarButton(true);
@@ -138,7 +140,7 @@ chrome.devtools.network.onNavigated.addListener(() => {
   updateOpenSidebarButton(false);
   waitingForFreshInspection = true;
   chrome.storage.local.remove(storageKey);
-  refreshDisabledMessage = 'Open the sidebar to continue inspecting and re-enable DevTools.';
+  refreshDisabledMessage = 'Click the Xray toolbar button on this page to reopen the sidebar, then choose a new element to inspect.';
   disableDevtoolsIntegration(refreshDisabledMessage, 'paused');
 });
 
@@ -212,7 +214,7 @@ function renderSnapshot(snapshot, status) {
     renderIdentitySection(snapshot.identity),
     renderRowsSection('Element Details', snapshot.elementProps, 'section-props section-compact', renderImageDownloadAction(snapshot.imageSrc)),
     renderGroupedSection('Layout & State', insightGroups, 'section-insights'),
-    renderRowsSection('Visual', snapshot.visual, 'section-visual section-compact'),
+    renderRowsSection('Visual', snapshot.visual, 'section-visual section-compact', renderCopyCssAction(snapshot.cssSnippet)),
     renderRowsSection('Useful Attributes', snapshot.attributes, 'section-attrs section-compact'),
     renderBoxSection(snapshot.boxModel)
   ].filter(Boolean).join('');
@@ -220,6 +222,7 @@ function renderSnapshot(snapshot, status) {
   root.innerHTML = sections || renderEmpty('No meaningful properties for this element yet.');
   bindCopyInteractions();
   bindImageDownloadAction();
+  bindCopyCssAction();
 }
 
 function renderIdentitySection(identity) {
@@ -239,14 +242,14 @@ function renderIdentitySection(identity) {
 }
 
 function renderRowsSection(title, rows, className, actionHtml = '') {
-  if (!rows || !rows.length) return '';
+  if ((!rows || !rows.length) && !actionHtml) return '';
   return `
     <section class="section ${className || ''}">
       <div class="section-header">
         <h2 class="section-title">${escapeHtml(title)}</h2>
       </div>
       <div class="section-body">
-        ${renderRows(rows)}
+        ${rows && rows.length ? renderRows(rows) : ''}
         ${actionHtml}
       </div>
     </section>
@@ -258,6 +261,15 @@ function renderImageDownloadAction(imageSrc) {
   return `
     <div class="section-actions">
       <button class="action-btn" type="button" id="download-image" data-image-url="${escapeAttr(imageSrc)}">Download Image</button>
+    </div>
+  `;
+}
+
+function renderCopyCssAction(cssSnippet) {
+  if (!cssSnippet) return '';
+  return `
+    <div class="section-actions">
+      <button class="action-btn" type="button" id="copy-css">Copy CSS</button>
     </div>
   `;
 }
@@ -452,18 +464,17 @@ function applyDevtoolsEnabledState(enabled, disabledMessage = '') {
     return;
   }
 
-  pageMeta.textContent = 'DevTools paused until you reopen the sidebar.';
+  pageMeta.textContent = 'DevTools paused until you use the Xray toolbar button again.';
   setStatus(disabledMessage || 'DevTools paused.');
   root.innerHTML = `
     ${renderStateCard({
       eyebrow: 'Paused',
       title: 'DevTools paused after refresh',
-      message: disabledMessage || 'Open the sidebar to continue inspecting and bring DevTools back.',
+      message: disabledMessage || 'Click the Xray toolbar button on this page to reopen the sidebar and bring DevTools back.',
       tone: 'paused',
-      actionHtml: '<button class="action-btn primary" id="paused-open-sidebar" type="button">Open Sidebar</button>'
+      actionHtml: ''
     })}
   `;
-  bindPausedStateActions();
 }
 
 function disableDevtoolsIntegration(disabledMessage, reason = 'removed') {
@@ -480,16 +491,8 @@ function disableDevtoolsIntegration(disabledMessage, reason = 'removed') {
         ? 'Close and reopen DevTools to finish removing Xray. You can turn it back on later from the Xray sidebar.'
         : (disabledState === 'toggle_off'
           ? 'Close and reopen DevTools to hide the Xray tab. Turn it back on from the Xray sidebar when you need it again.'
-          : 'Open the sidebar to continue inspecting and re-enable DevTools.'))
+          : 'Click the Xray toolbar button on this page to reopen the sidebar, then choose a new element to inspect.'))
     );
-  });
-}
-
-function bindPausedStateActions() {
-  const pausedOpenSidebarButton = document.getElementById('paused-open-sidebar');
-  if (!pausedOpenSidebarButton) return;
-  pausedOpenSidebarButton.addEventListener('click', () => {
-    openSidebarFromDevtools();
   });
 }
 
@@ -535,6 +538,31 @@ function bindImageDownloadAction() {
       }
       setStatus('Image download started.');
     });
+  });
+}
+
+function bindCopyCssAction() {
+  const button = document.getElementById('copy-css');
+  if (!button) return;
+
+  button.addEventListener('click', async () => {
+    const cssSnippet = lastSnapshot && lastSnapshot.cssSnippet;
+    if (!cssSnippet) {
+      setStatus('No CSS snippet is available for this element.');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(cssSnippet);
+      const original = button.textContent;
+      button.textContent = 'Copied';
+      setStatus('CSS snippet copied.');
+      setTimeout(() => {
+        button.textContent = original;
+      }, 900);
+    } catch {
+      setStatus('Copy failed. Try again.');
+    }
   });
 }
 
@@ -615,6 +643,55 @@ function buildDevtoolsSnapshot() {
     return parts.join(' > ');
   }
 
+  function escapeCssIdentifier(value) {
+    if (typeof CSS !== 'undefined' && CSS && typeof CSS.escape === 'function') {
+      return CSS.escape(value);
+    }
+    return String(value).replace(/[^a-zA-Z0-9_-]/g, (char) => `\\${char}`);
+  }
+
+  function buildCssSelector(node) {
+    function buildNodeSelectorPart(currentNode, classLimit) {
+      const tag = currentNode.tagName.toLowerCase();
+      if (currentNode.id) return `${tag}#${escapeCssIdentifier(currentNode.id)}`;
+      const classes = Array.from(currentNode.classList)
+        .slice(0, classLimit)
+        .map((className) => `.${escapeCssIdentifier(className)}`)
+        .join('');
+      return `${tag}${classes}`;
+    }
+
+    function isUniqueSelector(selector) {
+      try {
+        return document.querySelector(selector) === node;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    const ancestry = [];
+    let current = node;
+    while (current && current !== document.body && ancestry.length < 4) {
+      ancestry.unshift(current);
+      if (current.id) break;
+      current = current.parentElement;
+    }
+
+    for (let classLimit = 1; classLimit <= 2; classLimit += 1) {
+      for (let start = ancestry.length - 1; start >= 0; start -= 1) {
+        const selector = ancestry
+          .slice(start)
+          .map((currentNode) => buildNodeSelectorPart(currentNode, classLimit))
+          .join(' > ');
+        if (selector && isUniqueSelector(selector)) return selector;
+      }
+    }
+
+    return ancestry
+      .map((currentNode) => buildNodeSelectorPart(currentNode, 2))
+      .join(' > ');
+  }
+
   function hasUsefulOverflow(cs) {
     return cs.overflow !== 'visible' || cs.overflowX !== 'visible' || cs.overflowY !== 'visible';
   }
@@ -676,6 +753,69 @@ function buildDevtoolsSnapshot() {
     if (top === bottom && right === left) return `${top} ${right}`;
     if (right === left) return `${top} ${right} ${bottom}`;
     return `${top} ${right} ${bottom} ${left}`;
+  }
+
+  function buildCssSnippet(selector, cs, options) {
+    const declarations = [];
+    const safeSelector = selector || 'element';
+    const hasText = !!(options && options.hasText);
+    const margin = options && options.margin ? options.margin : [];
+    const padding = options && options.padding ? options.padding : [];
+    const tag = options && options.tag ? options.tag : '';
+
+    function pushDeclaration(property, value) {
+      if (!value) return;
+      declarations.push(`  ${property}: ${value};`);
+    }
+
+    pushDeclaration('display', cs.display);
+    if (cs.position !== 'static') pushDeclaration('position', cs.position);
+    if (cs.zIndex !== 'auto') pushDeclaration('z-index', cs.zIndex);
+
+    if (tag !== 'img') {
+      if (cs.overflowX === cs.overflowY) {
+        if (cs.overflow !== 'visible') pushDeclaration('overflow', cs.overflow);
+      } else {
+        if (cs.overflowX !== 'visible') pushDeclaration('overflow-x', cs.overflowX);
+        if (cs.overflowY !== 'visible') pushDeclaration('overflow-y', cs.overflowY);
+      }
+    }
+
+    if (hasUsefulGap(cs)) {
+      if (cs.rowGap === cs.columnGap) {
+        pushDeclaration('gap', cs.rowGap);
+      } else {
+        pushDeclaration('row-gap', cs.rowGap);
+        pushDeclaration('column-gap', cs.columnGap);
+      }
+    }
+
+    if ((cs.display.includes('flex') || cs.display.includes('grid')) && cs.justifyContent !== 'normal') {
+      pushDeclaration('justify-content', cs.justifyContent);
+    }
+    if ((cs.display.includes('flex') || cs.display.includes('grid')) && cs.alignItems !== 'normal' && cs.alignItems !== 'stretch') {
+      pushDeclaration('align-items', cs.alignItems);
+    }
+
+    const textColor = rgbToHex(cs.color) || cs.color;
+    const backgroundColor = rgbToHex(cs.backgroundColor) || cs.backgroundColor;
+    if (hasText && textColor && textColor !== 'transparent' && textColor !== 'rgba(0, 0, 0, 0)') {
+      pushDeclaration('color', textColor);
+      pushDeclaration('font-family', cs.fontFamily);
+      pushDeclaration('font-size', cs.fontSize);
+      if (cs.fontWeight !== '400') pushDeclaration('font-weight', cs.fontWeight);
+      if (cs.lineHeight !== 'normal') pushDeclaration('line-height', cs.lineHeight);
+    }
+    if (backgroundColor && backgroundColor !== 'transparent' && backgroundColor !== 'rgba(0, 0, 0, 0)') {
+      pushDeclaration('background-color', backgroundColor);
+    }
+    if (cs.opacity !== '1') pushDeclaration('opacity', cs.opacity);
+    if (hasVisibleRadius(cs.borderRadius)) pushDeclaration('border-radius', cs.borderRadius);
+    if (cs.boxShadow !== 'none') pushDeclaration('box-shadow', cs.boxShadow);
+    if (margin.length && hasNonZeroBoxValues(margin)) pushDeclaration('margin', formatBoxValues(margin));
+    if (padding.length && hasNonZeroBoxValues(padding)) pushDeclaration('padding', formatBoxValues(padding));
+
+    return `${safeSelector} {\n${declarations.join('\n')}\n}`;
   }
 
   const cs = getComputedStyle(el);
@@ -820,6 +960,7 @@ function buildDevtoolsSnapshot() {
     state,
     layout,
     parentLayout,
+    cssSnippet: buildCssSnippet(buildCssSelector(el) || tag, cs, { hasText: !!fullText, tag, margin, padding }),
     boxModel: summary.length ? { summary, margin, border, padding, size: `${Math.round(rect.width)} × ${Math.round(rect.height)}` } : null,
     visual,
     attributes

@@ -2,6 +2,7 @@ const PANEL_CSS_FILE = 'panel.css';
 const CONTENT_SCRIPT_FILE = 'content.js';
 const CAPTURE_KEY_PREFIX = 'xray_capture_';
 const DEVTOOLS_DISABLE_REASON_KEY_PREFIX = 'xray_devtools_disable_reason_';
+const LEGACY_INSPECTOR_KEY_PREFIX = 'inspector_';
 
 async function openSidebarForTab(tabId) {
   if (!tabId) return false;
@@ -68,6 +69,11 @@ function clearStoredCaptureForTab(tabId) {
   chrome.storage.local.remove(`${CAPTURE_KEY_PREFIX}${tabId}`);
 }
 
+function clearLegacyInspectorStateForTab(tabId) {
+  if (!tabId) return;
+  chrome.storage.local.remove(`${LEGACY_INSPECTOR_KEY_PREFIX}${tabId}`);
+}
+
 function setDevtoolsDisableReason(tabId, reason) {
   if (!tabId) return;
   chrome.storage.local.set({ [`${DEVTOOLS_DISABLE_REASON_KEY_PREFIX}${tabId}`]: reason });
@@ -76,6 +82,19 @@ function setDevtoolsDisableReason(tabId, reason) {
 function clearDevtoolsDisableReason(tabId) {
   if (!tabId) return;
   chrome.storage.local.remove(`${DEVTOOLS_DISABLE_REASON_KEY_PREFIX}${tabId}`);
+}
+
+function clearTransientExtensionState() {
+  chrome.storage.local.get(null, (items) => {
+    const keysToRemove = Object.keys(items || {}).filter((key) => (
+      key.startsWith(CAPTURE_KEY_PREFIX) ||
+      key.startsWith(DEVTOOLS_DISABLE_REASON_KEY_PREFIX) ||
+      key.startsWith(LEGACY_INSPECTOR_KEY_PREFIX)
+    ));
+
+    if (!keysToRemove.length) return;
+    chrome.storage.local.remove(keysToRemove);
+  });
 }
 
 function buildDownloadFilename(url) {
@@ -94,14 +113,24 @@ chrome.action.onClicked.addListener(async (tab) => {
   await openSidebarForTab(tab.id);
 });
 
+chrome.runtime.onInstalled.addListener(() => {
+  clearTransientExtensionState();
+});
+
+chrome.runtime.onStartup.addListener(() => {
+  clearTransientExtensionState();
+});
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
   if (changeInfo.status !== 'loading') return;
   clearStoredCaptureForTab(tabId);
+  clearLegacyInspectorStateForTab(tabId);
   setDevtoolsDisableReason(tabId, 'paused');
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
   clearStoredCaptureForTab(tabId);
+  clearLegacyInspectorStateForTab(tabId);
   clearDevtoolsDisableReason(tabId);
 });
 

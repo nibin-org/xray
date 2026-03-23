@@ -3,12 +3,13 @@
   "name": "Xray",
   "version": "1.0.0",
   "description": "Click any element to instantly inspect its DOM properties, styles, and box model.",
-  "permissions": ["activeTab", "downloads", "scripting", "storage", "tabs"],
+  "permissions": ["activeTab", "downloads", "scripting", "storage"],
   "devtools_page": "devtools.html",
   "background": {
     "service_worker": "background.js"
   },
   "action": {
+    "default_title": "Xray",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
